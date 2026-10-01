@@ -1,0 +1,16 @@
+{
+  "name": "마켓 펄스",
+  "short_name": "마켓 펄스",
+  "description": "경제·주식·부동산 핵심 이슈와 시장지표를 1분마다 갱신",
+  "start_url": "./#briefing",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EEF2F6",
+  "theme_color": "#123A5A",
+  "lang": "ko",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

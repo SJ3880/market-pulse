@@ -31,6 +31,11 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sources as S  # noqa: E402
+import extras as X  # noqa: E402
+import alerts as A  # noqa: E402
+import summaries as SM  # noqa: E402
+
+SUM_CACHE = {}  # 원문 요약 저장분 {링크: [시각, 요약]}
 
 KST = dt.timezone(dt.timedelta(hours=9))
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -197,6 +202,53 @@ def excluded(title):
     return any(r.search(title) for r in EXCLUDE_RE)
 
 
+OUTLET_NAMES = set(S.OUTLETS) | set(S.OUTLET_ALIASES)
+
+
+def clean_title(title):
+    """' - 머니투데이' 같은 매체명 꼬리, '[그래픽]' 같은 앞 꼬리표 제거."""
+    t = title.strip()
+    for _ in range(2):
+        if " - " in t:
+            head, tail = t.rsplit(" - ", 1)
+            tail_n = tail.strip()
+            if tail_n in OUTLET_NAMES or normalize_outlet(tail_n) in S.OUTLETS:  # 알려진 매체명일 때만
+                t = head.strip()
+    t = re.sub(S.TITLE_TAGS_STRIP, "", t)
+    return t.strip()
+
+
+NOISE_RE = re.compile("|".join(S.NOISE_WORDS))
+
+
+def is_noise(title):
+    return bool(NOISE_RE.search(title))
+
+
+RELEVANT_ALL = list(dict.fromkeys(S.RELEVANT_WORDS + S.IMPACT_KEYWORDS + [w for ws in S.TAB_RULES.values() for w in ws]))
+
+
+IMPACT_SET = {w.lower() for w in S.IMPACT_KEYWORDS}
+
+
+_WORD_RE = {}
+
+
+def _has(word, tl):
+    w = word.lower()
+    if w.isascii():  # 영문은 단어 경계로 ('ai' 가 'said' 에 걸리지 않게)
+        r = _WORD_RE.get(w) or _WORD_RE.setdefault(w, re.compile(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])"))
+        return bool(r.search(tl))
+    return w in tl
+
+
+def relevance(text, tab=None):
+    """경제·시장 관련 단어 점수 (시장영향 키워드·해당 탭 핵심어는 2점)."""
+    tl = text.lower()
+    strong = IMPACT_SET | {w.lower() for w in S.TAB_RULES.get(tab, [])}
+    return sum(2 if w.lower() in strong else 1 for w in RELEVANT_ALL if _has(w, tl))
+
+
 def items_from_feed(feed, raw, now):
     entries = parse_feed(raw)
     items = []
@@ -212,10 +264,11 @@ def items_from_feed(feed, raw, now):
         outlet = normalize_outlet(outlet)
         if outlet not in S.OUTLETS:
             continue  # 화이트리스트 밖 매체 제외
+        title = clean_title(title)
         ts = e["pub"] or now
         if now - ts > MAX_AGE_H * 3600 or ts - now > 3600:
             continue
-        if excluded(title) or not re.match(r"https?://", e["link"]):
+        if excluded(title) or is_noise(title) or not re.match(r"https?://", e["link"]):
             continue
         if feed.get("must") and not any(w in title for w in feed["must"]):
             continue  # 부처 발표 피드: 제목에 기관명이 있는 기사만
@@ -224,12 +277,12 @@ def items_from_feed(feed, raw, now):
         if feed["kind"] == "gnews" and e["desc_html"]:
             for href, rt, ro in GN_RELATED_RE.findall(html.unescape(e["desc_html"])):
                 ro_n = normalize_outlet(strip_html(ro))
-                rt = strip_html(rt)
-                if ro_n in S.OUTLETS and rt and not excluded(rt) and href.startswith("http"):
+                rt = clean_title(strip_html(rt))
+                if ro_n in S.OUTLETS and rt and not excluded(rt) and not is_noise(rt) and href.startswith("http"):
                     related.append((href, rt, ro_n))
             if len(related) > 1:
                 group = hashlib.md5(e["link"].encode()).hexdigest()[:10]
-        summary = "" if feed["kind"] == "gnews" else e["desc"][:220]
+        summary = "" if feed["kind"] == "gnews" else e["desc"][:700]
         base = dict(feed=feed["id"], tab=feed.get("tab"), sub=feed.get("sub"), lang=feed.get("lang", "ko"),
                     official=feed.get("official", False), top=feed.get("top", False), group=group)
         if feed.get("official_name"):  # 발표 기관명으로 표시하고, 보도 매체는 요약란에
@@ -341,7 +394,11 @@ def opposite(ta, tb):
     return False
 
 
-def similar(a, b):
+def similar(a, b, loose=False):
+    if loose and not opposite(a["title"], b["title"]):  # 같은 기관 발표끼리는 느슨하게
+        sh_ = len(a["tk"] & b["tk"])
+        if sh_ >= 3 or (sh_ >= 2 and len(a["bg"] & b["bg"]) / max(1, len(a["bg"] | b["bg"])) >= 0.2):
+            return True
     if opposite(a["title"], b["title"]):
         return False
     shared = len(a["tk"] & b["tk"])
@@ -360,7 +417,7 @@ def similar(a, b):
     return False
 
 
-def cluster(items):
+def cluster(items, loose=False):
     for it in items:
         it["bg"] = bigrams(it["title"])
         it["tk"] = set(tokens(it["title"], keep_num=True))
@@ -374,7 +431,7 @@ def cluster(items):
         else:
             for c in clusters:
                 # 대표 기사 + 최근 합류 기사 몇 개와 비교
-                if any(similar(it, m) for m in c["members"][:3]):
+                if any(similar(it, m, loose) for m in c["members"][:3]):
                     target = c
                     break
         if target is None:
@@ -396,8 +453,13 @@ def score_cluster(c, now):
     mem = c["members"]
     # 같은 매체 중복 제거 (가장 최근 것)
     by_outlet = {}
+
+    def better(a, b):  # 같은 매체 기사 중: 요약 있음 > 직접 링크 > 최신
+        ka = (bool(a.get("summary")), "news.google.com" not in a["link"], a["ts"])
+        kb = (bool(b.get("summary")), "news.google.com" not in b["link"], b["ts"])
+        return ka > kb
     for m in mem:
-        if m["outlet"] not in by_outlet or m["ts"] > by_outlet[m["outlet"]]["ts"]:
+        if m["outlet"] not in by_outlet or better(m, by_outlet[m["outlet"]]):
             by_outlet[m["outlet"]] = m
     uniq = sorted(by_outlet.values(), key=lambda m: -m["ts"])
     outlets = len(uniq)
@@ -428,11 +490,11 @@ def score_cluster(c, now):
     if hits:
         reasons.append("키워드 " + ", ".join(hits[:2]))
 
-    summary = rep.get("summary") or next((m["summary"] for m in uniq if m.get("summary")), "")
+    summary, summary_src = SM.best_rss_summary(uniq, lambda o: S.OUTLETS.get(o, 0.7))
     subs = Counter(m.get("_sub") for m in mem if m.get("_sub"))
     return dict(
         title=rep["title"], link=rep["link"], outlet=rep["outlet"], ts=int(newest), first_ts=int(first),
-        summary=summary, outlets=[m["outlet"] for m in uniq], count=outlets,
+        summary=summary, summary_src=summary_src, outlets=[m["outlet"] for m in uniq], count=outlets,
         articles=[dict(title=m["title"], link=m["link"], outlet=m["outlet"], ts=int(m["ts"])) for m in uniq[:10]],
         score=round(score, 3), reasons=reasons, keywords=hits[:4],
         rising=recent2h >= 3 and (now - first) < 3 * 3600,
@@ -525,8 +587,26 @@ def build_snapshot(prev_snapshot=None):
     t0 = time.time()
     items, status = fetch_all_feeds(now)
     markets = fetch_markets()
+    extras = X.collect_extras(http_get, fetch_quote)
+    # 미 국채 10년: Yahoo 단위(×10 여부)를 FRED 공식값과 비교해 보정
+    f10 = extras.get("fred10") or {}
+    for m in markets:
+        if m["sym"] == "^TNX" and m.get("price") and f10.get("value"):
+            ref = f10["value"]
+            for k in (1, 0.1, 10):
+                if abs(m["price"] * k - ref) < 0.6:
+                    if k != 1:
+                        for fld in ("price", "prev", "change"):
+                            if m.get(fld) is not None:
+                                m[fld] = round(m[fld] * k, 4)
+                        m["spark"] = [round(v * k, 4) for v in m.get("spark", [])]
+                    m["check"] = f"FRED {f10.get('date')} {ref:.2f}% 대비 확인"
+                    break
+            else:
+                m["check"] = f"FRED {ref:.2f}%와 차이 큼"
 
-    # 링크 중복 제거
+    # 링크 중복 제거 (같은 기사면 요약이 있는 언론사 직접 링크를 남김)
+    items.sort(key=lambda it: ("news.google.com" in it["link"], not it.get("summary")))
     seen, uniq = set(), []
     for it in items:
         key = re.sub(r"([?&])(utm_[^=&]*|call_from|from|ref)=[^&#]*", r"\1", it["link"]).split("#")[0].rstrip("?&")
@@ -552,6 +632,9 @@ def build_snapshot(prev_snapshot=None):
     for tab in ("economy", "stocks", "realestate"):
         cl = cluster(by_tab.get(tab, []))
         issues = [score_cluster(c, now) for c in cl]
+        # 시장 관련성 확인: 단독 보도는 관련 단어 2개 이상, 다수 보도는 1개 이상
+        issues = [i for i in issues if not is_noise(i["title"]) and
+                  relevance(" ".join(a["title"] for a in i["articles"][:3]), tab) >= (1 if i["count"] >= 2 else 2)]
         issues.sort(key=lambda x: -x["score"])
         issues = issues[:TOP_N]
         rank_changes(issues, prev_tabs.get(tab, {}).get("issues"))
@@ -560,13 +643,26 @@ def build_snapshot(prev_snapshot=None):
             iss["heat"] = round(100 * iss["score"] / mx)
         tabs[tab] = dict(issues=issues, keywords=top_keywords(issues), total_articles=len(by_tab.get(tab, [])))
 
+    # 요약이 부족한 상위 이슈는 원문 앞부분으로 보강
+    try:
+        SM.enrich(tabs, http_get, SUM_CACHE)
+    except Exception as ex:  # noqa: BLE001
+        log("요약 보강 실패:", repr(ex))
+
     # 같은 발표를 여러 매체가 보도한 경우 하나로 묶기
     policy = []
-    for c in cluster(official):
+    for c in cluster(official, loose=True):
         mem = sorted(c["members"], key=lambda m: (-S.OUTLETS.get(m["summary"].replace(" 보도", ""), 0.7), -m["ts"]))
         rep = mem[0]
         media = sorted({m["summary"].replace(" 보도", "") for m in mem if m["summary"].endswith(" 보도")})
-        summary = (f"{', '.join(media[:3])}{' 외' if len(media) > 3 else ''} 보도 ({len(media)}곳)" if media else rep.get("summary", ""))
+        if len(media) > 1:
+            summary = f"{', '.join(media[:3])}{' 외' if len(media) > 3 else ''} 보도 ({len(media)}곳)"
+        elif media:
+            summary = f"{media[0]} 보도"
+        else:
+            summary = rep.get("summary", "")
+            if summary[:30].replace(" ", "") == rep["title"][:30].replace(" ", ""):
+                summary = ""  # 제목과 같은 요약은 생략
         policy.append(dict(title=rep["title"], link=rep["link"], outlet=rep["outlet"],
                            ts=int(max(m["ts"] for m in mem)), summary=summary))
     policy.sort(key=lambda x: -x["ts"])
@@ -577,7 +673,7 @@ def build_snapshot(prev_snapshot=None):
         generated_at=int(now),
         generated_kst=dt.datetime.fromtimestamp(now, KST).strftime("%Y-%m-%d %H:%M:%S"),
         took_ms=int((time.time() - t0) * 1000),
-        markets=markets, tabs=tabs, policy=policy, sources=status,
+        markets=markets, tabs=tabs, policy=policy, sources=status, extras=extras,
         method=("이슈 점수 = 보도 매체 수(로그) × 최신성(6시간 반감) × 출처 권위 × 시장영향 키워드 가점"
                 " × 포털 주요뉴스 가점. 화이트리스트 매체만 집계, 같은 매체 중복 보도는 1회로 계산."),
     )
@@ -597,7 +693,8 @@ def sh(cmd, cwd, check=True):
 
 
 class DataBranch:
-    """`data` 브랜치를 항상 커밋 1개로 유지하며 강제 푸시 (저장소가 커지지 않음)."""
+    """`data` 브랜치를 항상 커밋 1개로 유지하며 강제 푸시 (저장소가 커지지 않음).
+    timeline/ (하루 흐름), state/ (알림 기록) 은 실행이 바뀌어도 이어서 보관."""
 
     def __init__(self, repo_dir, workdir):
         self.dir = workdir
@@ -619,30 +716,102 @@ class DataBranch:
         sh("git config user.email 'market-pulse-bot@users.noreply.github.com'", workdir)
         self.first = True
 
-    def load_previous(self):
+    def restore(self):
+        """이전 data 브랜치에서 직전 스냅샷을 읽고 timeline/state 폴더를 가져옴."""
         try:
             sh("git fetch -q --depth 1 origin data", self.dir)
+        except Exception:  # noqa: BLE001
+            return None
+        for d in ("timeline", "state"):
+            sh(f"git checkout FETCH_HEAD -- {d} 2>/dev/null || true", self.dir, check=False)
+        try:
             return json.loads(sh("git show FETCH_HEAD:latest.json", self.dir))
         except Exception:  # noqa: BLE001
             return None
 
     def publish(self, snap):
-        st = stamp_of(snap["generated_at"])
-        snap["stamp"] = st
-        body = json.dumps(snap, ensure_ascii=False, separators=(",", ":"))
-        with open(os.path.join(self.dir, "snap", st + ".json"), "w", encoding="utf-8") as f:
-            f.write(body)
-        with open(os.path.join(self.dir, "latest.json"), "w", encoding="utf-8") as f:
-            f.write(body)
-        snaps = sorted(os.listdir(os.path.join(self.dir, "snap")))
-        for old in snaps[:-20]:
-            os.remove(os.path.join(self.dir, "snap", old))
+        st = write_snapshot(self.dir, snap, keep=20, pretty=False)
         sh("git add -A", self.dir)
         amend = "" if self.first else "--amend"
         sh(f"git commit -q {amend} -m 'snapshot {st}'", self.dir)
         self.first = False
         sh("git push -q -f origin HEAD:data", self.dir)
         return st
+
+
+def write_snapshot(store, snap, keep=20, pretty=False):
+    st = stamp_of(snap["generated_at"])
+    snap["stamp"] = st
+    body = json.dumps(snap, ensure_ascii=False, **({"indent": 1} if pretty else {"separators": (",", ":")}))
+    os.makedirs(os.path.join(store, "snap"), exist_ok=True)
+    with open(os.path.join(store, "snap", st + ".json"), "w", encoding="utf-8") as f:
+        f.write(body)
+    with open(os.path.join(store, "latest.json"), "w", encoding="utf-8") as f:
+        f.write(body)
+    snaps = sorted(os.listdir(os.path.join(store, "snap")))
+    for old in snaps[:-keep]:
+        os.remove(os.path.join(store, "snap", old))
+    # 실패한 추가 지표의 응답 일부 (원인 확인용)
+    ddir = os.path.join(store, "debug")
+    os.makedirs(ddir, exist_ok=True)
+    for fn in os.listdir(ddir):
+        if fn[:-4] not in X.DEBUG:
+            os.remove(os.path.join(ddir, fn))
+    for name, text in X.DEBUG.items():
+        with open(os.path.join(ddir, name + ".txt"), "w", encoding="utf-8") as f:
+            f.write(text)
+    return st
+
+
+# ─────────────────────────── 하루 타임라인 ───────────────────────────
+TIMELINE_DAYS = 30
+
+
+def update_timeline(store, snap):
+    """10분마다 탭별 상위 3개 이슈를 timeline/YYYY-MM-DD.json 에 기록."""
+    now = dt.datetime.fromtimestamp(snap["generated_at"], KST)
+    slot = now.replace(minute=now.minute - now.minute % 10, second=0).strftime("%H:%M")
+    date = now.strftime("%Y-%m-%d")
+    tdir = os.path.join(store, "timeline")
+    os.makedirs(tdir, exist_ok=True)
+    path = os.path.join(tdir, date + ".json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            day = json.load(f)
+    except Exception:  # noqa: BLE001
+        day = {"date": date, "slots": []}
+    if day["slots"] and day["slots"][-1]["t"] == slot:
+        return False
+    entry = {"t": slot, "tabs": {}}
+    for tab in ("economy", "stocks", "realestate"):
+        entry["tabs"][tab] = [dict(title=i["title"], link=i["link"], outlet=i["outlet"], count=i["count"])
+                              for i in snap["tabs"].get(tab, {}).get("issues", [])[:3]]
+    q = {m["sym"]: m for m in snap["markets"]}
+    entry["mkt"] = {k: q[s].get("price") for k, s in (("kospi", "^KS11"), ("kosdaq", "^KQ11"), ("usdkrw", "KRW=X"))
+                    if s in q}
+    day["slots"].append(entry)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(day, f, ensure_ascii=False, separators=(",", ":"))
+    files = sorted(fn[:-5] for fn in os.listdir(tdir) if re.match(r"\d{4}-\d{2}-\d{2}\.json$", fn))
+    for old in files[:-TIMELINE_DAYS]:
+        os.remove(os.path.join(tdir, old + ".json"))
+    with open(os.path.join(tdir, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({"dates": files[-TIMELINE_DAYS:][::-1]}, f)
+    return True
+
+
+def load_state(store, name):
+    try:
+        with open(os.path.join(store, "state", name), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_state(store, name, data):
+    os.makedirs(os.path.join(store, "state"), exist_ok=True)
+    with open(os.path.join(store, "state", name), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
 
 
 def interval_now():
@@ -660,30 +829,42 @@ def main():
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db = None if a.no_push else DataBranch(repo_dir, os.path.join(repo_dir, "..", "_market_pulse_data"))
-    prev = db.load_previous() if db else None
+    store = db.dir if db else a.out
+    os.makedirs(store, exist_ok=True)
+    prev = db.restore() if db else None
+    SUM_CACHE.update(load_state(store, "summaries.json"))
     deadline = time.time() + a.loop_minutes * 60
 
     while True:
-        started = time.time()
         try:
             snap = build_snapshot(prev)
             n_ok = sum(1 for s in snap["sources"] if s["ok"])
-            if db:
-                st = db.publish(snap)
-            else:
-                os.makedirs(os.path.join(a.out, "snap"), exist_ok=True)
-                st = stamp_of(snap["generated_at"])
-                snap["stamp"] = st
-                body = json.dumps(snap, ensure_ascii=False, indent=1)
-                for p in (os.path.join(a.out, "latest.json"), os.path.join(a.out, "snap", st + ".json")):
-                    with open(p, "w", encoding="utf-8") as f:
-                        f.write(body)
+            # 키워드 알림·타임라인: 실패해도 데이터 업로드는 계속
+            try:
+                astate, astatus = A.process(snap, load_state(store, "alerts.json"), repo_dir, log)
+                save_state(store, "alerts.json", astate)
+            except Exception as ex:  # noqa: BLE001
+                astatus = {"enabled": False, "error": f"알림 처리 오류: {type(ex).__name__}"}
+            snap["alerts"] = astatus
+            save_state(store, "summaries.json", SUM_CACHE)
+            try:
+                update_timeline(store, snap)
+            except Exception as ex:  # noqa: BLE001
+                log("타임라인 기록 실패:", repr(ex))
+            st = db.publish(snap) if db else write_snapshot(store, snap, pretty=True)
+            ex = snap["extras"]
             log(f"[{st}] 소스 {n_ok}/{len(snap['sources'])} 성공 · 이슈 "
                 + " / ".join(f"{k}:{len(v['issues'])}" for k, v in snap["tabs"].items())
+                + " · 추가지표 " + " ".join(f"{k}:{'O' if v.get('ok') else 'X'}" for k, v in ex.items())
                 + f" · {snap['took_ms']}ms")
             for s in snap["sources"]:
                 if not s["ok"]:
                     log(f"   ✗ {s['label']}: {s['error']}")
+            for k, v in ex.items():
+                if not v.get("ok") and not v.get("missing_key"):
+                    log(f"   ✗ 추가지표 {k}: {v.get('error')}")
+            if astatus.get("error"):
+                log(f"   ✗ 텔레그램: {astatus['error']}")
             prev = snap
         except Exception as ex:  # noqa: BLE001
             log("수집 실패:", repr(ex))

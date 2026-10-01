@@ -92,6 +92,14 @@ FEEDS = [
     dict(id="mk_re", label="매일경제 · 부동산", kind="rss", outlet="매일경제", url="https://www.mk.co.kr/rss/50300009/", tab="realestate"),
     dict(id="yna_eco", label="연합뉴스 · 경제", kind="rss", outlet="연합뉴스", url="https://www.yna.co.kr/rss/economy.xml", tab="economy"),
     dict(id="yna_mkt", label="연합뉴스 · 마켓+", kind="rss", outlet="연합뉴스", url="https://www.yna.co.kr/rss/market.xml", tab="stocks"),
+    dict(id="yna_all", label="연합뉴스 · 최신", kind="rss", outlet="연합뉴스", url="https://www.yna.co.kr/rss/news.xml", tab=None),
+    dict(id="yna_ind", label="연합뉴스 · 산업", kind="rss", outlet="연합뉴스", url="https://www.yna.co.kr/rss/industry.xml", tab=None),
+    dict(id="donga_eco", label="동아일보 · 경제", kind="rss", outlet="동아일보", url="https://rss.donga.com/economy.xml", tab="economy"),
+    dict(id="hani_eco", label="한겨레 · 경제", kind="rss", outlet="한겨레", url="https://www.hani.co.kr/rss/economy/", tab="economy"),
+    dict(id="khan_eco", label="경향신문 · 경제", kind="rss", outlet="경향신문", url="https://www.khan.co.kr/rss/rssdata/economy_news.xml", tab="economy"),
+    dict(id="sbs_eco", label="SBS · 경제", kind="rss", outlet="SBS", url="https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02&plink=RSSREADER", tab="economy"),
+    dict(id="chosun_eco", label="조선일보 · 경제", kind="rss", outlet="조선일보", url="https://www.chosun.com/arc/outboundfeeds/rss/category/economy/?outputType=xml", tab="economy"),
+    dict(id="newsis_eco", label="뉴시스 · 경제", kind="rss", outlet="뉴시스", url="https://www.newsis.com/RSS/economy.xml", tab="economy"),
     dict(id="infomax", label="연합인포맥스 · 전체", kind="rss", outlet="연합인포맥스", url="https://news.einfomax.co.kr/rss/allArticle.xml", tab=None),
     dict(id="cnbc_top", label="CNBC · Top News", kind="rss", outlet="CNBC", url="https://www.cnbc.com/id/100003114/device/rss/rss.html", tab=None, lang="en"),
     dict(id="cnbc_mkt", label="CNBC · Markets", kind="rss", outlet="CNBC", url="https://www.cnbc.com/id/20910258/device/rss/rss.html", tab="economy", lang="en"),
@@ -139,7 +147,7 @@ MARKETS = [
 # 시장 영향이 큰 키워드 — 제목에 있으면 가점(최대 3개)
 IMPACT_KEYWORDS = [
     "기준금리", "금리 인하", "금리 인상", "금통위", "FOMC", "연준", "파월", "국채", "환율", "원달러",
-    "물가", "CPI", "PCE", "고용", "실업률", "GDP", "성장률", "경상수지", "무역수지", "수출", "관세",
+    "물가", "CPI", "PCE", "고용지표", "고용보고서", "실업률", "GDP", "성장률", "경상수지", "무역수지", "수출", "관세",
     "코스피", "코스닥", "외국인", "공매도", "밸류업", "반도체", "삼성전자", "하이닉스", "엔비디아",
     "급등", "급락", "폭락", "폭등", "사상 최고", "최고치", "최저치", "서킷브레이커", "사이드카",
     "IPO", "공모주", "상장", "유상증자", "블록딜", "M&A", "인수",
@@ -171,3 +179,29 @@ GLOBAL_WORDS = ["뉴욕증시", "나스닥", "S&P", "다우", "엔비디아", "�
                 "닛케이", "일본 증시", "중국 증시", "항셍", "유럽 증시", "월가", "빅테크"]
 
 OFFICIAL_KEYWORDS_BOK = ["한국은행", "한은"]
+
+# ─────────────────────────────────────────────────────────────
+# 5) 시장과 무관한 기사 거르기
+# ─────────────────────────────────────────────────────────────
+# 제목에 이 단어(정규식)가 있으면 이슈에서 제외 (연예·가십·인사·운세 등)
+NOISE_WORDS = [
+    "배우", "가수(?!요)", "아이돌", "방송인", "연예", "개그맨", "개그우먼", "걸그룹", "보이그룹", "유튜버", "인플루언서",
+    "남편", "아내", "열애", "결혼식", "이혼", "불륜", "\\[프로필\\]", "프로필\\]", "이 시각 헤드라인", "이 시각", "부고", "\\[인사\\]",
+    "운세", "드라마", "예능", "축구", "야구", "농구", "배구", "올림픽", "월드컵", "맛집", "레시피",
+    "celebrity", "horoscope",
+]
+# 경제·시장 관련성 판단 단어 (TAB_RULES·IMPACT_KEYWORDS 와 함께 사용)
+# 단독 보도(1개 매체) 이슈는 이 단어가 2개 이상, 여러 매체 이슈는 1개 이상 있어야 남김
+RELEVANT_WORDS = [
+    "기업", "실적", "매출", "영업이익", "순이익", "투자", "대미투자", "은행", "증권", "금융", "대출", "부채", "채권",
+    "펀드", "자산", "주주", "상장사", "시총", "반도체", "AI", "배터리", "자동차", "조선", "원전", "방산", "바이오",
+    "유가", "원자재", "금값", "달러", "엔화", "위안", "통화", "재정", "세수", "세금", "세제", "법인세", "예산",
+    "규제", "정책", "기재부", "재경부", "금융위", "금감원", "한은", "국토부", "공정위", "산업부", "무역", "통상",
+    "소비", "물가", "임금", "일자리", "고용", "경기", "성장", "가계", "부동산", "주택", "아파트", "분양", "청약",
+    "전세", "월세", "집값", "매매", "임대", "건설", "PF", "리츠", "ETF", "코스피", "코스닥", "증시", "주가", "IPO",
+    "박스권", "랠리", "목표주가", "증권사", "외국인", "기관", "개인 투자자", "수급", "상승", "하락", "급등", "급락",
+    "market", "stocks", "economy", "inflation", "Fed", "rates", "bond", "yield", "earnings", "tariff", "oil",
+    "dollar", "housing", "mortgage", "bank", "investor", "GDP", "jobs",
+]
+# 제목 앞머리에서 지울 꼬리표
+TITLE_TAGS_STRIP = r"^\s*\[(그래픽|표|영상|사진|이런국장 저런주식|집코노미[^\]]*|부동산360|이슈 ?분석|오늘의 ?\w+)\]\s*"
