@@ -703,8 +703,9 @@
     if (!o) return;
     const iss = o._policy ? o : { ...findIssue(o), _tabLabel: o._tabLabel || findIssue(o)._tabLabel, _rank: o._rank };
     const arts = iss.articles?.length ? iss.articles : [{ title: iss.title, link: iss.link, outlet: iss.outlet, ts: iss.ts }];
-    const paras = (iss.summary && !iss._policy) ? iss.summary.split(/\n\n+/) : [];
-    const src = iss.summary_src;
+    const body = iss._policy ? (iss.lede || "") : (iss.summary || "");
+    const paras = body ? body.split(/\n\n+/) : [];
+    const src = iss._policy ? iss.lede_src : iss.summary_src;
     const main = arts.find((a) => src && a.link === src.link) || arts.find((a) => a.link === iss.link) || arts[0];
     const others = arts.filter((a) => a !== main);
     const chips = [iss._tabLabel, iss._rank ? `${iss._rank}위` : "", iss.count ? `${iss.count}개 매체 보도` : "", ...(iss.reasons || []).slice(1)]
@@ -715,7 +716,7 @@
       <div class="meta"><span class="src">${esc(iss.outlet || "")}</span>${iss.ts ? `<span>${ago(iss.ts)}</span>` : ""}</div>
       <div class="qv-sum">
         ${paras.length ? paras.map((p) => `<p>${esc(p)}</p>`).join("")
-          : `<p class="hint">${iss._policy ? esc(iss.summary || "") + (iss.summary ? " · " : "") + "발표 내용은 아래 기사에서 확인할 수 있어요." : "이 이슈는 기사 요약을 받지 못했어요. 아래 출처에서 원문을 확인해 주세요."}</p>`}
+          : `<p class="hint">${iss._policy ? esc(iss.summary || "") + (iss.summary ? " · " : "") + "요약을 준비하는 중이에요. 1~2분 뒤 다시 열면 보일 수 있어요." : "요약을 준비하는 중이에요. 원문을 여는 데 1~2분 걸릴 수 있고, 일부 언론사는 원문을 열 수 없어 아래 출처 링크로만 제공돼요."}</p>`}
       </div>
       <div class="qv-src">
         <h3>출처</h3>
