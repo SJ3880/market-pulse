@@ -87,10 +87,6 @@ FEEDS = [
     dict(id="gn_loan", label="Google 뉴스 · 대출규제", kind="gnews", url=gn("주택담보대출 OR DSR OR 가계대출 OR 부동산 대책"), tab="realestate"),
     dict(id="gn_supply", label="Google 뉴스 · 공급/청약", kind="gnews", url=gn("분양 OR 아파트 청약 OR 재건축 OR 주택공급 OR 부동산 PF"), tab="realestate"),
     # ── 언론사 직접 RSS (속보성 보강) ──
-    dict(id="hk_eco", label="한국경제 · 경제", kind="rss", outlet="한국경제", url="https://www.hankyung.com/feed/economy", tab="economy"),
-    dict(id="hk_fin", label="한국경제 · 증권", kind="rss", outlet="한국경제", url="https://www.hankyung.com/feed/finance", tab="stocks"),
-    dict(id="hk_re", label="한국경제 · 부동산", kind="rss", outlet="한국경제", url="https://www.hankyung.com/feed/realestate", tab="realestate"),
-    dict(id="hk_intl", label="한국경제 · 국제", kind="rss", outlet="한국경제", url="https://www.hankyung.com/feed/international", tab=None),
     dict(id="mk_eco", label="매일경제 · 경제", kind="rss", outlet="매일경제", url="https://www.mk.co.kr/rss/30100041/", tab="economy"),
     dict(id="mk_stock", label="매일경제 · 증권", kind="rss", outlet="매일경제", url="https://www.mk.co.kr/rss/50200011/", tab="stocks"),
     dict(id="mk_re", label="매일경제 · 부동산", kind="rss", outlet="매일경제", url="https://www.mk.co.kr/rss/50300009/", tab="realestate"),
@@ -101,9 +97,15 @@ FEEDS = [
     dict(id="cnbc_mkt", label="CNBC · Markets", kind="rss", outlet="CNBC", url="https://www.cnbc.com/id/20910258/device/rss/rss.html", tab="economy", lang="en"),
     dict(id="mw_top", label="MarketWatch · Top", kind="rss", outlet="MarketWatch", url="https://feeds.content.dowjones.io/public/rss/mw_topstories", tab=None, lang="en"),
     # ── 공식기관 (정책·공식발표 탭) ──
-    dict(id="kr_moef", label="정책브리핑 · 기획재정부", kind="rss", outlet="기획재정부", url="https://www.korea.kr/rss/dept_moef.xml", official=True),
-    dict(id="kr_fsc", label="정책브리핑 · 금융위원회", kind="rss", outlet="금융위원회", url="https://www.korea.kr/rss/dept_fsc.xml", official=True),
-    dict(id="kr_molit", label="정책브리핑 · 국토교통부", kind="rss", outlet="국토교통부", url="https://www.korea.kr/rss/dept_molit.xml", official=True),
+    # 정책브리핑(korea.kr)은 해외 서버(GitHub) 접속을 막아 두어, 부처 발표를 보도한 신뢰 매체 기사로 대신 수집
+    dict(id="gov_fin", label="부처 발표 · 재정경제부/기재부", kind="gnews", official=True, official_name="재정경제부·기재부",
+         url=gn('"재정경제부" OR "기획재정부" OR "기획예산처" 발표'), must=["재정경제부", "기획재정부", "기재부", "재경부", "기획예산처"]),
+    dict(id="gov_fsc", label="부처 발표 · 금융위/금감원", kind="gnews", official=True, official_name="금융위·금감원",
+         url=gn('"금융위원회" OR "금융위" OR "금융감독원" 발표'), must=["금융위", "금감원", "금융감독원"]),
+    dict(id="gov_molit", label="부처 발표 · 국토교통부", kind="gnews", official=True, official_name="국토교통부",
+         url=gn('"국토교통부" OR "국토부" 발표'), must=["국토교통부", "국토부"]),
+    dict(id="gov_bok", label="부처 발표 · 한국은행", kind="gnews", official=True, official_name="한국은행",
+         url=gn('"한국은행" 발표 OR 통계'), must=["한국은행", "한은"]),
     dict(id="fed_press", label="Federal Reserve · Press", kind="rss", outlet="Federal Reserve", url="https://www.federalreserve.gov/feeds/press_all.xml", official=True, lang="en"),
 ]
 

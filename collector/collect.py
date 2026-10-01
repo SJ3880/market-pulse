@@ -34,7 +34,7 @@ import sources as S  # noqa: E402
 
 KST = dt.timezone(dt.timedelta(hours=9))
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 MarketPulseBot/1.0")
+      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 MAX_AGE_H = 36           # 이보다 오래된 기사는 버림
 TOP_N = 30               # 탭별 이슈 개수
 FIXTURE_DIR = os.environ.get("FIXTURE_DIR")  # 테스트용: 실제 인터넷 대신 파일에서 읽기
@@ -45,7 +45,7 @@ def log(*a):
 
 
 # ─────────────────────────── 네트워크 ───────────────────────────
-def http_get(url, timeout=12, fixture_key=None):
+def http_get(url, timeout=8, fixture_key=None):
     if FIXTURE_DIR:
         p = os.path.join(FIXTURE_DIR, (fixture_key or hashlib.md5(url.encode()).hexdigest()))
         for ext in ("", ".xml", ".json"):
@@ -217,6 +217,8 @@ def items_from_feed(feed, raw, now):
             continue
         if excluded(title) or not re.match(r"https?://", e["link"]):
             continue
+        if feed.get("must") and not any(w in title for w in feed["must"]):
+            continue  # 부처 발표 피드: 제목에 기관명이 있는 기사만
         group = None
         related = []
         if feed["kind"] == "gnews" and e["desc_html"]:
@@ -230,6 +232,10 @@ def items_from_feed(feed, raw, now):
         summary = "" if feed["kind"] == "gnews" else e["desc"][:220]
         base = dict(feed=feed["id"], tab=feed.get("tab"), sub=feed.get("sub"), lang=feed.get("lang", "ko"),
                     official=feed.get("official", False), top=feed.get("top", False), group=group)
+        if feed.get("official_name"):  # 발표 기관명으로 표시하고, 보도 매체는 요약란에
+            summary = f"{outlet} 보도"
+            outlet = feed["official_name"]
+            related = []
         if related:
             for href, rt, ro in related:
                 items.append(dict(base, title=rt, link=href, outlet=ro, ts=ts, summary=""))
@@ -554,9 +560,17 @@ def build_snapshot(prev_snapshot=None):
             iss["heat"] = round(100 * iss["score"] / mx)
         tabs[tab] = dict(issues=issues, keywords=top_keywords(issues), total_articles=len(by_tab.get(tab, [])))
 
-    official.sort(key=lambda x: -x["ts"])
-    policy = [dict(title=o["title"], link=o["link"], outlet=o["outlet"], ts=int(o["ts"]), summary=o.get("summary", ""))
-              for o in official[:60]]
+    # 같은 발표를 여러 매체가 보도한 경우 하나로 묶기
+    policy = []
+    for c in cluster(official):
+        mem = sorted(c["members"], key=lambda m: (-S.OUTLETS.get(m["summary"].replace(" 보도", ""), 0.7), -m["ts"]))
+        rep = mem[0]
+        media = sorted({m["summary"].replace(" 보도", "") for m in mem if m["summary"].endswith(" 보도")})
+        summary = (f"{', '.join(media[:3])}{' 외' if len(media) > 3 else ''} 보도 ({len(media)}곳)" if media else rep.get("summary", ""))
+        policy.append(dict(title=rep["title"], link=rep["link"], outlet=rep["outlet"],
+                           ts=int(max(m["ts"] for m in mem)), summary=summary))
+    policy.sort(key=lambda x: -x["ts"])
+    policy = policy[:60]
 
     snap = dict(
         version=1,
