@@ -256,61 +256,101 @@ def _find_key(o, k):
     return None
 
 
-# ─────────────────────────── 네이버 금융: 수급·업종 ───────────────────────────
+# ─────────────────────────── 투자자별 순매수 (네이버 금융) ───────────────────────────
+# 네이버 금융이 새 화면(자바스크립트로 그리는 방식)으로 바뀌어, 여러 주소를 차례로 시도
 FLOW_RE = re.compile(r"(개인|외국인|기관)\s*(?:</?[^>]+>\s*)*?([+\-−]?\s*[\d,]+)\s*(?:</?[^>]+>\s*)*억")
+DAY_ROW_RE = re.compile(r"(\d{2}\.\d{2}\.\d{2})\s*</td>\s*<td[^>]*>\s*([+\-−]?[\d,]+)\s*</td>\s*<td[^>]*>\s*([+\-−]?[\d,]+)\s*</td>"
+                        r"\s*<td[^>]*>\s*([+\-−]?[\d,]+)\s*</td>", re.S)
+JSON_KEYS = {
+    "individual": r"(?:personal|individual|indi|private)",
+    "foreign": r"(?:foreign|frgn|forgn)",
+    "institution": r"(?:institution|institutional|organ|inst)",
+}
+
+
+def _num(x):
+    return int(float(x.replace(",", "").replace("−", "-").replace(" ", "").replace("+", "")))
+
+
+def _flow_from_text(txt):
+    """HTML 표 / JSON / 페이지 속 데이터에서 개인·외국인·기관 값 찾기."""
+    # 1) 일별 투자자 매매동향 표 (가장 최근 날짜 행): 날짜, 개인, 외국인, 기관계
+    m = DAY_ROW_RE.search(txt)
+    if m:
+        return {"individual": _num(m.group(2)), "foreign": _num(m.group(3)), "institution": _num(m.group(4)),
+                "date": m.group(1)}, "day-table"
+    # 2) 한글 표기 '개인 +1,234억'
+    i0 = txt.find("투자자별")
+    vals = {}
+    for who, n in FLOW_RE.findall(txt[i0: i0 + 4000] if i0 >= 0 else txt):
+        vals.setdefault(who, n)
+    if len(vals) == 3:
+        return {"individual": _num(vals["개인"]), "foreign": _num(vals["외국인"]), "institution": _num(vals["기관"])}, "kr-text"
+    # 3) JSON 키 (personalValue 등)
+    out = {}
+    for k, pat in JSON_KEYS.items():
+        m = re.search(r'"[A-Za-z]*' + pat + r'[A-Za-z]*"\s*:\s*"?([+\-−]?[\d,]+(?:\.\d+)?)', txt, re.I)
+        if m:
+            out[k] = _num(m.group(1))
+    if len(out) == 3:
+        return out, "json"
+    return None, None
 
 
 def fetch_flow(http_get):
     def run():
-        out = {}
-        for mkt in ("KOSPI", "KOSDAQ"):
-            url = f"https://finance.naver.com/sise/sise_index.naver?code={mkt}"
-            txt = _decode(http_get(url, timeout=8, fixture_key="nv_index_" + mkt))
-            i0 = txt.find("투자자별")
-            section = txt[i0: i0 + 4000] if i0 >= 0 else txt  # 투자자별 매매동향 영역만
-            vals = {}
-            for who, num in FLOW_RE.findall(section):
-                if who in vals:
-                    continue
-                n = num.replace(",", "").replace("−", "-").replace(" ", "")
+        out, used = {}, {}
+        today = dt.datetime.now(KST).strftime("%Y%m%d")
+        for mkt, sosok in (("KOSPI", "01"), ("KOSDAQ", "02")):
+            cands = [
+                f"https://finance.naver.com/sise/investorDealTrendDay.naver?bizdate={today}&sosok={sosok}",
+                f"https://m.stock.naver.com/api/index/{mkt}/integration",
+                f"https://m.stock.naver.com/api/index/{mkt}/trend",
+                f"https://finance.naver.com/sise/sise_index.naver?code={mkt}",
+            ]
+            for n, url in enumerate(cands):
                 try:
-                    vals[who] = int(n)
-                except ValueError:
-                    pass
-            if len(vals) < 3:
-                i = txt.find("외국인")
-                _dbg("flow_" + mkt, txt[max(0, i - 1500): i + 1500] if i >= 0 else txt[:3000])
-                continue
-            out[mkt] = {"individual": vals["개인"], "foreign": vals["외국인"], "institution": vals["기관"]}
+                    txt = _decode(http_get(url, timeout=8, fixture_key=f"nv_flow_{mkt}_{n}"))
+                except Exception as ex:  # noqa: BLE001
+                    _dbg(f"flow_{mkt}_{n}", f"{url}\n{type(ex).__name__}: {ex}")
+                    continue
+                vals, how = _flow_from_text(txt)
+                if vals:
+                    out[mkt] = vals
+                    used[mkt] = f"{n}:{how}"
+                    break
+                k = max(txt.find("foreign"), txt.find("외국인"), txt.find("frgn"))
+                _dbg(f"flow_{mkt}_{n}", url + "\n" + (txt[max(0, k - 1500): k + 1500] if k >= 0 else txt[-3000:]))
         if not out:
-            raise RuntimeError("투자자별 매매동향을 읽지 못함")
-        return {"markets": out, "unit": "억원"}
+            raise RuntimeError("투자자별 매매동향을 읽지 못함 (debug/flow_* 참고)")
+        return {"markets": out, "unit": "억원", "via": used}
 
     return _cached("flow", 60, run)
 
 
-SECTOR_RE = re.compile(
-    r"type=upjong&(?:amp;)?no=(\d+)\"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*>\s*(?:<[^>]+>\s*)*([+\-]?[\d\.]+)\s*%", re.S)
+# ─────────────────────────── 업종 등락 (섹터 ETF, Yahoo) ───────────────────────────
+# 네이버 업종 화면 대신, 업종을 대표하는 국내 섹터 ETF 등락률로 업종 흐름을 봄 (Yahoo 시세)
+SECTOR_ETFS = [
+    ("091160.KS", "반도체"), ("091170.KS", "은행"), ("091180.KS", "자동차"), ("102970.KS", "증권"),
+    ("117700.KS", "건설"), ("117680.KS", "철강"), ("117460.KS", "에너지화학"), ("244580.KS", "바이오"),
+    ("140700.KS", "보험"), ("140710.KS", "운송"), ("266410.KS", "필수소비재"), ("266390.KS", "경기소비재"),
+    ("305540.KS", "2차전지"), ("266370.KS", "IT"), ("139230.KS", "중공업"), ("139220.KS", "건설기계·조선"),
+    ("228790.KS", "화장품"), ("091220.KS", "금융"),
+]
 
 
-def fetch_sectors(http_get):
+def fetch_sectors(fetch_quote):
     def run():
-        txt = _decode(http_get("https://finance.naver.com/sise/sise_group.naver?type=upjong", timeout=8,
-                               fixture_key="nv_upjong"))
-        rows = []
-        for no, name, pct in SECTOR_RE.findall(txt):
-            try:
-                rows.append({"no": no, "name": html.unescape(name).strip(), "pct": float(pct)})
-            except ValueError:
-                pass
-        if len(rows) < 10:
-            i = txt.find("upjong&")
-            _dbg("sectors", txt[max(0, i - 500): i + 3000] if i >= 0 else txt[:3000])
-            raise RuntimeError(f"업종 표를 읽지 못함({len(rows)}개)")
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            qs = list(ex.map(lambda e: fetch_quote(("etf", e[0], e[1], 0, "원")), SECTOR_ETFS))
+        rows = [{"no": q["sym"], "name": q["name"], "pct": round(q["pct"], 2)} for q in qs
+                if q.get("price") is not None and q.get("pct") is not None]
+        if len(rows) < 6:
+            raise RuntimeError(f"섹터 ETF 시세 부족({len(rows)}개)")
         rows.sort(key=lambda r: -r["pct"])
-        up = sum(1 for r in rows if r["pct"] > 0)
-        return {"top": rows[:6], "bottom": rows[-6:][::-1], "count": len(rows), "up": up,
-                "down": sum(1 for r in rows if r["pct"] < 0)}
+        return {"top": rows[:6], "bottom": rows[-6:][::-1], "count": len(rows),
+                "up": sum(1 for r in rows if r["pct"] > 0), "down": sum(1 for r in rows if r["pct"] < 0),
+                "basis": "섹터 ETF"}
 
     return _cached("sectors", 120, run)
 
@@ -342,7 +382,7 @@ def fetch_bigcaps(fetch_quote):
 def fred_10y(http_get):
     """FRED DGS10 최근값(전일 기준). Yahoo 값 단위 검증용."""
     def run():
-        txt = _decode(http_get("https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10", timeout=10,
+        txt = _decode(http_get("https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10", timeout=25,
                                fixture_key="fred_dgs10"))
         rows = [r for r in csv.reader(io.StringIO(txt)) if len(r) == 2]
         for d, v in reversed(rows[1:]):
@@ -360,7 +400,7 @@ def collect_extras(http_get, fetch_quote):
         "rates": lambda: fetch_ecos(http_get, keys["ecos"]),
         "realestate": lambda: fetch_reb(http_get, keys["reb"]),
         "flow": lambda: fetch_flow(http_get),
-        "sectors": lambda: fetch_sectors(http_get),
+        "sectors": lambda: fetch_sectors(fetch_quote),
         "bigcaps": lambda: fetch_bigcaps(fetch_quote),
         "fred10": lambda: fred_10y(http_get),
     }
