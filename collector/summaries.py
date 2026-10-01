@@ -114,7 +114,7 @@ def best_rss_summary(members, outlet_weight):
 def enrich(tabs, http_get, cache, log=print):
     """요약이 부족한 상위 이슈를 원문 앞부분으로 보강. cache: {link: [시각, 요약]}"""
     todo = []
-    for tab in ("economy", "stocks", "realestate"):
+    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
         for iss in tabs.get(tab, {}).get("issues", [])[:ENRICH_TOP]:
             if len(iss.get("summary", "")) >= 150:
                 continue

@@ -45,14 +45,14 @@ OUTLET_ALIASES = {
 }
 
 
-def gn(q, hours=None):
-    """Google 뉴스 한국판 검색 RSS (최근 1일)."""
-    w = f" when:{hours}h" if hours else " when:1d"
+def gn(q, hours=None, days=None):
+    """Google 뉴스 한국판 검색 RSS (기본 최근 1일)."""
+    w = f" when:{hours}h" if hours else f" when:{days}d" if days else " when:1d"
     return f"https://news.google.com/rss/search?q={quote(q + w)}&hl=ko&gl=KR&ceid=KR:ko"
 
 
-def gn_en(q):
-    return f"https://news.google.com/rss/search?q={quote(q + ' when:1d')}&hl=en-US&gl=US&ceid=US:en"
+def gn_en(q, days=1):
+    return f"https://news.google.com/rss/search?q={quote(q + f' when:{days}d')}&hl=en-US&gl=US&ceid=US:en"
 
 
 GN_KR_BUSINESS = "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko"
@@ -79,8 +79,25 @@ FEEDS = [
     dict(id="gn_flow", label="Google 뉴스 · 수급", kind="gnews", url=gn("외국인 순매수 OR 외국인 순매도 OR 공매도 OR 개인 투자자"), tab="stocks"),
     dict(id="gn_semis", label="Google 뉴스 · 반도체/대형주", kind="gnews", url=gn("삼성전자 주가 OR SK하이닉스 주가 OR 반도체주"), tab="stocks"),
     dict(id="gn_nyse", label="Google 뉴스 · 뉴욕증시", kind="gnews", url=gn("뉴욕증시 OR 나스닥 OR S&P500 OR 엔비디아"), tab="stocks"),
-    dict(id="gn_ipo", label="Google 뉴스 · IPO/공모주", kind="gnews", url=gn("공모주 OR 수요예측 OR 상장 첫날 OR IPO 코스닥"), tab="stocks", sub="ipo"),
-    dict(id="gn_us_mkt", label="Google News · Stock market", kind="gnews", url=gn_en("stock market OR Nasdaq OR S&P 500 OR Dow"), tab="stocks", lang="en"),
+    # ── IPO 관련 이슈 (더벨류: 상장 전 펀딩·주관사·상장 추진/연기·밸류에이션·제도, 최근 3일) ──
+    dict(id="gn_ipo_fund", label="Google 뉴스 · 상장 전 투자유치", kind="gnews", url=gn('프리IPO OR "pre-IPO" OR 시리즈C OR 시리즈D OR 투자 유치 기업가치 OR 브릿지 투자', days=3), tab="ipo"),
+    dict(id="gn_ipo_lead", label="Google 뉴스 · 주관사 선정", kind="gnews", url=gn("상장 주관사 선정 OR 대표주관사 선정 OR IPO 주관 경쟁 OR 주관사 교체", days=3), tab="ipo"),
+    dict(id="gn_ipo_plan", label="Google 뉴스 · 상장 추진/연기/철회", kind="gnews", url=gn("상장 추진 OR 상장 연기 OR 상장 철회 OR IPO 재도전 OR 상장 재추진 OR IPO 대어", days=3), tab="ipo"),
+    dict(id="gn_ipo_val", label="Google 뉴스 · 몸값/엑시트", kind="gnews", url=gn("IPO 몸값 OR 상장 기업가치 OR 구주매출 OR FI 엑시트 OR 투자금 회수 IPO OR 밸류에이션 논란", days=3), tab="ipo"),
+    dict(id="gn_ipo_rule", label="Google 뉴스 · 상장 제도", kind="gnews", url=gn("상장 제도 개편 OR 기술특례 제도 OR 상장심사 개선 OR 공모주 제도 OR 의무보유확약 OR 코스닥 상장 요건", days=3), tab="ipo"),
+    dict(id="gn_ipo_league", label="Google 뉴스 · ECM 리그테이블", kind="gnews", url=gn("ECM 리그테이블 OR IPO 주관 실적 OR IPO 시장 전망 OR 증권사 IB 실적", days=3), tab="ipo"),
+    dict(id="gn_ipo_abroad", label="Google 뉴스 · 해외 상장", kind="gnews", url=gn("나스닥 상장 추진 OR 미국 상장 추진 OR 해외 상장 OR 이중상장", days=3), tab="ipo"),
+    dict(id="gn_ipo_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IPO", kind="gnews",
+         url=gn("IPO OR 상장 OR 프리IPO (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ipo"),
+    dict(id="gn_ipo_en", label="Google News · IPO pipeline", kind="gnews", url=gn_en("IPO pipeline OR plans IPO OR IPO valuation OR pre-IPO funding OR delays IPO", days=3), tab="ipo", lang="en"),
+    # ── IB (유상증자·블록딜·메자닌·M&A, 최근 3일) ──
+    dict(id="gn_ecm", label="Google 뉴스 · 유상증자/메자닌", kind="gnews", url=gn("유상증자 OR 전환사채 OR 교환사채 OR 신주인수권부사채", days=3), tab="ib", sub="ecm"),
+    dict(id="gn_ecm2", label="Google 뉴스 · 블록딜/지분매각", kind="gnews", url=gn("블록딜 OR 시간외 대량매매 OR 지분 매각 OR 오버행", days=3), tab="ib", sub="ecm"),
+    dict(id="gn_mna", label="Google 뉴스 · M&A", kind="gnews", url=gn("인수합병 OR 경영권 매각 OR 우선협상대상자 OR 지분 인수 OR 사모펀드 인수", days=3), tab="ib", sub="mna"),
+    dict(id="gn_mna2", label="Google 뉴스 · 매각/인수전", kind="gnews", url=gn("매각 추진 OR 인수전 OR 본입찰 OR 예비입찰 OR M&A 시장", days=3), tab="ib", sub="mna"),
+    dict(id="gn_ib_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IB", kind="gnews",
+         url=gn("유상증자 OR 블록딜 OR 전환사채 OR M&A OR 경영권 OR 인수 (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ib"),
+    dict(id="gn_ib_en", label="Google News · M&A/Offerings", kind="gnews", url=gn_en("acquisition deal billion OR merger agreement OR share offering OR block trade", days=3), tab="ib", lang="en"),
     # ── 부동산 ──
     dict(id="gn_apt", label="Google 뉴스 · 아파트값", kind="gnews", url=gn("아파트값 OR 집값 OR 아파트 매매 OR 부동산원"), tab="realestate"),
     dict(id="gn_jeonse", label="Google 뉴스 · 전월세", kind="gnews", url=gn("전세 OR 월세 OR 전셋값 OR 임대차"), tab="realestate"),
@@ -163,6 +180,11 @@ EXCLUDE_PATTERNS = [
 ]
 
 TAB_RULES = {
+    "ipo": ["IPO", "프리IPO", "상장", "주관사", "몸값", "기업가치", "구주매출", "투자 유치", "엑시트", "기술특례", "스팩",
+            "예비심사", "상장심사", "listing", "pre-IPO"],
+    "ib": ["유상증자", "블록딜", "전환사채", "교환사채", "메자닌", "M&A", "인수합병", "경영권", "매각", "사모펀드", "PEF",
+           "인수", "합병", "지분", "IB", "deal", "offering", "acquisition", "merger", "CB", "EB", "BW", "증자", "사채",
+           "투자 유치", "최대주주"],
     "realestate": ["부동산", "아파트", "집값", "전세", "월세", "주택", "분양", "청약", "재건축", "재개발",
                     "DSR", "주담대", "주택담보", "임대", "전셋", "매매가", "PF", "건설사", "오피스텔", "토지", "LH",
                     "real estate", "housing", "mortgage", "home sales"],
@@ -174,7 +196,35 @@ TAB_RULES = {
                 "jobs", "tariff", "Treasury", "yields", "central bank"],
 }
 
-IPO_WORDS = ["공모", "IPO", "수요예측", "상장 첫날", "상장예비심사", "증권신고서", "스팩", "SPAC", "따상", "코넥스", "기술특례"]
+IPO_WORDS = ["IPO", "프리IPO", "pre-IPO", "상장 추진", "상장 주관", "대표주관", "상장 철회", "상장 연기", "상장 재추진",
+             "재상장", "몸값", "구주매출", "기술특례", "상장심사", "예비심사", "코스닥 상장", "유가증권시장 상장", "코스피 상장",
+             "스팩", "SPAC", "증시 입성", "상장 앞둔", "상장 예정", "공모주", "공모가", "수요예측", "공모 청약", "일반청약", "증권신고서",
+             "상장 첫날", "따상", "코넥스", "이중상장", "나스닥 상장"]
+# IPO 탭에서 빼는 '일정성' 기사 (수요예측 결과·청약 경쟁률·신고서 제출·상장 첫날 주가 등)
+IPO_ROUTINE_WORDS = ["수요예측", "청약", "경쟁률", "증권신고서", "공모가 확정", "공모가 상단", "공모가 하단", "상장 첫날",
+                     "시초가", "따상", "공모주 일정", "이번주 공모", "청약 일정", "환불", "배정", "상장일"]
+# 일정성 단어가 있어도 이 단어가 있으면 '이슈'로 보고 남김
+IPO_ISSUE_WORDS = ["철회", "연기", "논란", "흥행 실패", "미달", "부진", "제도", "개편", "역대", "최대", "대어", "조원",
+                   "정정 요구", "제동", "금감원"]
+# IPO 이슈 우선순위 가점
+IPO_PRIORITY = {
+    "상장 전 투자유치": ["프리IPO", "pre-IPO", "시리즈C", "시리즈D", "시리즈E", "투자 유치", "투자유치", "브릿지", "기업가치", "valuation", "funding"],
+    "주관사": ["주관사 선정", "대표주관", "주관 경쟁", "주관사 교체", "주관 실적", "리그테이블"],
+    "상장 추진·연기": ["상장 추진", "상장 연기", "상장 철회", "재도전", "재추진", "이중상장", "나스닥 상장", "해외 상장", "plans IPO", "delays IPO"],
+    "몸값·엑시트": ["몸값", "구주매출", "엑시트", "투자금 회수", "밸류에이션", "기업가치"],
+    "제도 변화": ["제도", "개편", "개선", "요건", "의무보유", "상장심사", "금융당국", "거래소"],
+}
+IB_SPECIALIST_OUTLETS = ["더벨", "딜사이트", "인베스트조선"]
+
+# IB 탭: 세부 구분용 단어 (IPO 는 별도 탭)
+IB_SUB_WORDS = {
+    "ecm": ["유상증자", "블록딜", "전환사채", "교환사채", "신주인수권부사채", "제3자배정", "주주배정", "시간외 대량매매",
+            "CB 발행", "EB 발행", "BW 발행", "rights offering", "secondary offering", "block trade"],
+    "mna": ["M&A", "인수합병", "경영권", "매각 주관", "우선협상대상자", "지분 인수", "인수 추진", "인수전", "PEF", "사모펀드",
+            "예비입찰", "본입찰", "주식매매계약", "acquisition", "merger", "takeover", "buyout"],
+}
+# IB 중 '정말 큰 건' 가점 단어
+IB_BIG_WORDS = ["조원", "조 원", "최대", "역대", "대어", "billion", "record"]
 GLOBAL_WORDS = ["뉴욕증시", "나스닥", "S&P", "다우", "엔비디아", "테슬라", "애플", "마이크로소프트", "미국 증시", "미 증시",
                 "닛케이", "일본 증시", "중국 증시", "항셍", "유럽 증시", "월가", "빅테크"]
 

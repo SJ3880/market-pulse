@@ -342,3 +342,11 @@ body.qv-open { overflow: hidden; }
   .qv-list a { grid-template-columns: 70px 1fr; }
   .qv-list small { display: none; }
 }
+
+/* 5개 분야 (경제·주식·부동산·IPO·IB) — 화면 폭에 맞춰 자동 배치 */
+.brief-top { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.brief-top .pick:nth-child(-n+3) { grid-column: span 2; }
+.brief-top .pick:nth-child(n+4) { grid-column: span 3; }
+@media (max-width: 960px) { .brief-top { grid-template-columns: minmax(0, 1fr); } .brief-top .pick { grid-column: auto !important; } }
+.tl-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.tl-col { border-left: 0; border-top: 1px solid var(--line); }

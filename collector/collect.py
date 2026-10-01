@@ -40,7 +40,10 @@ SUM_CACHE = {}  # 원문 요약 저장분 {링크: [시각, 요약]}
 KST = dt.timezone(dt.timedelta(hours=9))
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
-MAX_AGE_H = 36           # 이보다 오래된 기사는 버림
+MAX_AGE_H = 72           # 수집 단계에서 이보다 오래된 기사는 버림
+TAB_MAX_AGE_H = {"ipo": 72, "ib": 72}   # 그 외 탭은 36시간
+TAB_LIMIT = {"ipo": 20, "ib": 20}       # 탭별 최대 이슈 수 (그 외 TOP_N)
+TAB_HALF_LIFE = {"ipo": 14, "ib": 14}   # 최신성 감소 속도(시간) — IPO·IB 는 천천히
 TOP_N = 30               # 탭별 이슈 개수
 FIXTURE_DIR = os.environ.get("FIXTURE_DIR")  # 테스트용: 실제 인터넷 대신 파일에서 읽기
 
@@ -336,10 +339,21 @@ def classify(item):
         best = max(scores, key=scores.get)
         tab = best if scores[best] > 0 else None
     sub = None
+    # IPO 단어 → IPO 탭, 유증·블록딜·메자닌·M&A 단어 → IB 탭 (어느 피드에서 왔든)
+    is_ipo = contains_any(t, S.IPO_WORDS) > 0
+    ib_sub = next((k for k in ("ecm", "mna") if contains_any(t, S.IB_SUB_WORDS[k])), None)
+    if item.get("tab") == "ipo" or (is_ipo and tab in ("stocks", "economy", "ib", None)):
+        return "ipo", None
+    if item.get("tab") == "ib":
+        return "ib", ib_sub or item.get("sub")
+    if ib_sub and tab in ("stocks", "economy", None):
+        return "ib", ib_sub
+    if tab == "ipo":  # '상장' 같은 넓은 단어로만 걸린 기사는 주식 탭으로
+        tab = "stocks"
+    if tab == "ib" and not ib_sub:
+        tab = "economy"
     if tab == "stocks":
-        if item.get("sub") == "ipo" or contains_any(t, S.IPO_WORDS):
-            sub = "ipo"
-        elif item["lang"] == "en" or contains_any(t, S.GLOBAL_WORDS):
+        if item["lang"] == "en" or contains_any(t, S.GLOBAL_WORDS):
             sub = "global"
         else:
             sub = "kr"
@@ -449,7 +463,7 @@ def impact_hits(text):
     return [k for k in S.IMPACT_KEYWORDS if k.lower() in tl]
 
 
-def score_cluster(c, now):
+def score_cluster(c, now, half_life=6):
     mem = c["members"]
     # 같은 매체 중복 제거 (가장 최근 것)
     by_outlet = {}
@@ -478,7 +492,7 @@ def score_cluster(c, now):
     is_top = any(m.get("top") for m in mem)
 
     coverage = 1 + 1.5 * math.log(1 + outlets)
-    recency = 0.3 + 0.7 * math.exp(-age_h / 6)
+    recency = 0.3 + 0.7 * math.exp(-age_h / half_life)
     impact = 1 + 0.12 * min(3, len(hits))
     score = coverage * recency * auth * impact * (1.15 if is_top else 1.0)
 
@@ -501,6 +515,56 @@ def score_cluster(c, now):
         sub=subs.most_common(1)[0][0] if subs else None,
         _bg=list(rep["bg"]),
     )
+
+
+BIG_AMOUNT_RE = re.compile(r"\d+(?:\.\d+)?\s?조|\d,?\d{3}\s?억|[0-9]?천억|\$\s?\d+(?:\.\d+)?\s?(?:billion|bn)", re.I)
+
+
+def _is_big(text):
+    """조 단위·천억 단위 금액이나 '최대·역대·대어' 표현이 있으면 대형 딜."""
+    return bool(BIG_AMOUNT_RE.search(text)) or _has_any(text, S.IB_BIG_WORDS)
+
+
+def _has_any(text, words):
+    tl = text.lower()
+    return any(w.lower() in tl for w in words)
+
+
+def ipo_adjust(issues):
+    """IPO 탭: 수요예측·청약·신고서 같은 일정성 기사는 빼고(논란·철회·제도 등 이슈성 예외),
+    상장 전 대규모 펀딩·주관사·상장 추진/연기·몸값·제도 변화를 위로. IB 전문매체(더벨 등) 보도는 가점."""
+    out = []
+    for i in issues:
+        text = " ".join(a["title"] for a in i["articles"][:3])
+        if _has_any(text, S.IPO_ROUTINE_WORDS) and not _has_any(text, S.IPO_ISSUE_WORDS):
+            continue
+        tags = [k for k, words in S.IPO_PRIORITY.items() if _has_any(text, words)]
+        if tags:
+            i["score"] = round(i["score"] * (1.15 + 0.05 * min(2, len(tags) - 1)), 3)
+            i["reasons"].append(tags[0])
+        if _is_big(text):
+            i["score"] = round(i["score"] * 1.15, 3)
+            i["reasons"].append("대규모")
+        if any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
+            i["score"] = round(i["score"] * 1.1, 3)
+            i["reasons"].append("IB 전문매체")
+        out.append(i)
+    return out
+
+
+def ib_adjust(issues):
+    """IB 탭 우선순위: 여러 매체가 다룬 대형 딜 > 여러 매체 딜 > 단독 보도(아래쪽, 개수 채우기용)."""
+    for i in issues:
+        text = " ".join(a["title"] for a in i["articles"][:3])
+        if _is_big(text):
+            i["score"] = round(i["score"] * 1.25, 3)
+            i["reasons"].append("대형 딜")
+        if any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
+            i["score"] = round(i["score"] * 1.1, 3)
+            i["reasons"].append("IB 전문매체")
+        if i["count"] < 2 and not any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
+            i["score"] = round(i["score"] * 0.55, 3)  # 일반매체 단독 보도는 아래로
+    return issues
 
 
 def top_keywords(issues, n=14):
@@ -623,20 +687,26 @@ def build_snapshot(prev_snapshot=None):
             official.append(it)
             continue
         tab, sub = classify(it)
+        if tab and now - it["ts"] > TAB_MAX_AGE_H.get(tab, 36) * 3600:
+            continue  # 경제·주식·부동산은 36시간, IPO·IB 는 72시간까지
         if tab:
             it["_sub"] = sub
             by_tab[tab].append(it)
 
     tabs = {}
     prev_tabs = (prev_snapshot or {}).get("tabs", {})
-    for tab in ("economy", "stocks", "realestate"):
+    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
         cl = cluster(by_tab.get(tab, []))
-        issues = [score_cluster(c, now) for c in cl]
+        issues = [score_cluster(c, now, TAB_HALF_LIFE.get(tab, 6)) for c in cl]
         # 시장 관련성 확인: 단독 보도는 관련 단어 2개 이상, 다수 보도는 1개 이상
         issues = [i for i in issues if not is_noise(i["title"]) and
                   relevance(" ".join(a["title"] for a in i["articles"][:3]), tab) >= (1 if i["count"] >= 2 else 2)]
+        if tab == "ib":
+            issues = ib_adjust(issues)
+        elif tab == "ipo":
+            issues = ipo_adjust(issues)
         issues.sort(key=lambda x: -x["score"])
-        issues = issues[:TOP_N]
+        issues = issues[:TAB_LIMIT.get(tab, TOP_N)]
         rank_changes(issues, prev_tabs.get(tab, {}).get("issues"))
         mx = issues[0]["score"] if issues else 1
         for iss in issues:
@@ -783,7 +853,7 @@ def update_timeline(store, snap):
     if day["slots"] and day["slots"][-1]["t"] == slot:
         return False
     entry = {"t": slot, "tabs": {}}
-    for tab in ("economy", "stocks", "realestate"):
+    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
         entry["tabs"][tab] = [dict(title=i["title"], link=i["link"], outlet=i["outlet"], count=i["count"])
                               for i in snap["tabs"].get(tab, {}).get("issues", [])[:3]]
     q = {m["sym"]: m for m in snap["markets"]}

@@ -22,16 +22,19 @@
   const POLL_SEC = 60;
   const POLL_OFFSET = 40; // 수집기는 매분 0초에 시작해 20~30초 안에 올림 → 매분 40초에 확인
 
-  const TABS = { briefing: "브리핑", economy: "경제", stocks: "주식시장", realestate: "부동산", policy: "정책·발표", timeline: "하루 흐름", calendar: "일정" };
-  const SUBS = { all: "전체", kr: "국내", global: "해외", ipo: "IPO·공모" };
+  const TABS = { briefing: "브리핑", economy: "경제", stocks: "주식시장", realestate: "부동산", ipo: "IPO", ib: "IB", policy: "정책·발표", timeline: "하루 흐름", calendar: "일정" };
+  const SUBS = { all: "전체", kr: "국내", global: "해외" };
+  const IB_SUBS = { all: "전체", ecm: "유증·블록딜·메자닌", mna: "M&A" };
   const SIDE_MARKETS = {
     economy: ["KRW=X", "JPYKRW=X", "^TNX", "DX-Y.NYB", "CL=F", "GC=F"],
     stocks: ["^KS11", "^KQ11", "^GSPC", "^IXIC", "^SOX", "^N225", "^VIX", "BTC-USD"],
     realestate: ["^TNX", "KRW=X", "^KS11"],
+    ipo: ["^KQ11", "^KS11", "^IXIC", "^VIX"],
+    ib: ["^KS11", "^KQ11", "^VIX", "KRW=X"],
   };
 
   const S = {
-    snap: null, tab: "briefing", sub: "all", org: "all", open: new Set(),
+    snap: null, tab: "briefing", sub: "all", ibSub: "all", org: "all", open: new Set(),
     seen: {}, lastOk: 0, error: null, nextAt: 0,
   };
 
@@ -95,7 +98,7 @@
     S.snap = snap; S.error = null; S.lastOk = Date.now();
     // 수집기가 직전 스냅샷과 비교해 표시한 '새 진입' 이슈 (첫 로딩 때는 강조하지 않음)
     S.fresh = firstLoad ? new Set() : new Set(
-      ["economy", "stocks", "realestate"].flatMap((t) => (snap.tabs[t]?.issues || []).slice(0, 10)).filter((i) => i.is_new).map((i) => i.link));
+      ["economy", "stocks", "realestate", "ipo", "ib"].flatMap((t) => (snap.tabs[t]?.issues || []).slice(0, 10)).filter((i) => i.is_new).map((i) => i.link));
     S.flashOnce = true;
     if (S.tab === "timeline" && S.tl.dates && S.tl.sel === S.tl.dates[0]) loadTimeline();
     renderAll();
@@ -286,6 +289,8 @@
     economy: "금리·환율·물가·수출 등 거시경제 이슈",
     stocks: "국내외 증시, 수급, IPO·공모주",
     realestate: "집값·전월세·대출규제·공급",
+    ipo: "상장 전 대규모 투자유치·주관사 선정·상장 추진/연기/철회·몸값·FI 엑시트·제도 변화 등 IPO 관련 이슈 (수요예측·청약 등 일정 기사 제외)",
+    ib: "여러 매체가 다룬 대형 유상증자·블록딜·메자닌(CB·EB·BW)·M&A",
   };
 
   function renderMain() {
@@ -305,14 +310,16 @@
     const data = S.snap.tabs[t] || { issues: [], keywords: [] };
     let issues = data.issues;
     let chips = "";
-    if (t === "stocks") {
-      chips = `<div class="chips" role="group" aria-label="시장 구분">${Object.entries(SUBS).map(([k, v]) =>
-        `<button class="chip" data-sub="${k}" aria-pressed="${S.sub === k}">${v}</button>`).join("")}</div>`;
-      if (S.sub !== "all") issues = issues.filter((i) => i.sub === S.sub);
+    if (t === "stocks" || t === "ib") {
+      const subs = t === "ib" ? IB_SUBS : SUBS;
+      const cur = t === "ib" ? S.ibSub : S.sub;
+      chips = `<div class="chips" role="group" aria-label="구분">${Object.entries(subs).map(([k, v]) =>
+        `<button class="chip" data-${t === "ib" ? "ibsub" : "sub"}="${k}" aria-pressed="${cur === k}">${v}</button>`).join("")}</div>`;
+      if (cur && cur !== "all") issues = issues.filter((i) => i.sub === cur);
     }
     const list = issues.length ? issues.map((iss, i) => issueHTML(iss, i)).join("")
       : `<li class="empty">지금은 이 구분에 해당하는 이슈가 없어요. 다른 구분을 눌러 보세요.</li>`;
-    const evCats = { economy: ["금리", "경제"], stocks: ["금리", "주식"], realestate: ["금리", "부동산"] }[t];
+    const evCats = { economy: ["금리", "경제"], stocks: ["금리", "주식"], realestate: ["금리", "부동산"], ipo: ["금리", "주식"], ib: ["금리", "주식"] }[t];
     const top = t === "stocks" ? marketPanelHTML() : t === "realestate" ? realestateIndicatorsHTML() : "";
     return `${top}<div class="grid">
       <section class="panel" aria-label="${TABS[t]} 이슈">
@@ -329,7 +336,7 @@
   }
 
   function briefingHTML() {
-    const tabs = ["economy", "stocks", "realestate"];
+    const tabs = ["economy", "stocks", "realestate", "ipo", "ib"];
     const line = ["^KS11", "^KQ11", "KRW=X", "^GSPC", "^IXIC", "^TNX"].map(quote).filter((m) => m && m.price != null)
       .map((m) => `<span><strong>${esc(m.name)}</strong><span class="num">${fmt(m.price, m.digits)}</span> <span class="num ${dir(m.change)}">${pct(m.pct)}</span></span>`).join("")
       + (XT().flow?.markets?.KOSPI ? `<span><strong>외국인(코스피)</strong><span class="num ${dir(XT().flow.markets.KOSPI.foreign)}">${eok(XT().flow.markets.KOSPI.foreign)}</span></span>` : "");
@@ -351,7 +358,7 @@
       <div class="brief-top">${picks}</div>
       <div class="grid">
         <section class="panel" aria-label="전체 이슈 순위">
-          <div class="list-head"><div><h1>지금 가장 뜨거운 이슈</h1><p>경제·주식·부동산 전체를 같은 기준으로 줄 세운 상위 10개</p></div></div>
+          <div class="list-head"><div><h1>지금 가장 뜨거운 이슈</h1><p>경제·주식·부동산·IPO·IB 전체를 같은 기준으로 줄 세운 상위 10개</p></div></div>
           <ol class="issues">${all.map((iss, i) => issueHTML(iss, i, { tabLabel: TABS[iss._tab] })).join("")}</ol>
         </section>
         <aside class="side">
@@ -665,7 +672,7 @@
     if (!day && S.tl.err) return `<section class="panel"><div class="list-head"><div class="chips">${chips}</div></div><div class="empty">이 날짜 기록을 불러오지 못했어요. 잠시 뒤 다시 눌러 보세요.</div></section>`;
     if (!day) { loadTimeline(S.tl.sel); return `<section class="panel"><div class="list-head"><div class="chips">${chips}</div></div><div class="empty">불러오는 중이에요.</div></section>`; }
     const slots = day.slots || [];
-    const cols = ["economy", "stocks", "realestate"].map((t) => {
+    const cols = ["economy", "stocks", "realestate", "ipo", "ib"].map((t) => {
       const segs = segmentsOf(slots, t);
       return `<div class="tl-col"><h2 class="sec">${TABS[t]} 1위 변화 <small>${segs.length}번 바뀜</small></h2>
         ${segs.length ? `<ol class="tl">${segs.map((g) => `<li><span class="tm num">${g.start}${g.end !== g.start ? "–" + g.end : ""}<small>${dur(g.start, g.end)}</small></span>
@@ -686,7 +693,7 @@
   function findIssue(o) {
     // 타임라인 등 일부 정보만 있는 항목은 현재 이슈 목록에서 같은 기사/비슷한 제목을 찾아 보강
     if (o.articles) return o;
-    const all = ["economy", "stocks", "realestate"].flatMap((t) => (S.snap?.tabs[t]?.issues || []).map((i) => ({ ...i, _tabLabel: TABS[t] })));
+    const all = ["economy", "stocks", "realestate", "ipo", "ib"].flatMap((t) => (S.snap?.tabs[t]?.issues || []).map((i) => ({ ...i, _tabLabel: TABS[t] })));
     const b = bgr(o.title);
     return all.find((i) => i.link === o.link || i.articles.some((a) => a.link === o.link))
       || all.find((i) => jac(bgr(i.title), b) >= 0.5) || o;
@@ -757,6 +764,8 @@
     if (q) { openQV(S.q[+q.dataset.q], q); return; }
     const s = e.target.closest("[data-sub]");
     if (s) { S.sub = s.dataset.sub; renderMain(); return; }
+    const ibs = e.target.closest("[data-ibsub]");
+    if (ibs) { S.ibSub = ibs.dataset.ibsub; renderMain(); return; }
     const tl = e.target.closest("[data-tl]");
     if (tl) { S.tl.want = S.tl.sel = tl.dataset.tl; loadTimeline(tl.dataset.tl); renderMain(); return; }
     const g = e.target.closest("[data-org]");
