@@ -24,4 +24,8 @@ jobs:
       - name: 1분 간격 수집 (최대 55분)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ECOS_KEY: ${{ secrets.ECOS_KEY }}
+          REB_KEY: ${{ secrets.REB_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python collector/collect.py --loop-minutes 55
