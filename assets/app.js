@@ -405,7 +405,7 @@
         <table>${s.sources.map((x) => `<tr><td class="${x.ok ? "ok" : "bad"}">${x.ok ? "정상" : "실패"}</td><td>${esc(x.label)}</td><td class="num">${x.count}건</td><td>${esc(x.error || "")}</td></tr>`).join("")}</table>
       </details>
       <details><summary>추가 지표·알림 상태</summary>
-        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (네이버 금융)", bigcaps: "대형주 (Yahoo)", fred10: "미 국채 10년 검증 (FRED)" }).map(([k, nm]) => {
+        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)", fred10: "미 국채 10년 검증 (FRED)" }).map(([k, nm]) => {
           const v = (s.extras || {})[k] || {};
           const st = v.ok ? "정상" : v.missing_key ? "키 없음" : v.stale ? "지연" : "실패";
           return `<tr><td class="${v.ok ? "ok" : "bad"}">${st}</td><td>${nm}</td><td>${v.fetched_at ? ago(v.fetched_at) : ""}</td><td>${esc(v.error || "")}</td></tr>`;
@@ -473,7 +473,7 @@
     const col = (rows) => rows.map((r) => `<div class="sb"><span class="nm">${esc(r.name)}</span>
       <span class="bar"><i class="${r.pct >= 0 ? "pos" : "neg"}" style="width:${(Math.abs(r.pct) / mx * 100).toFixed(0)}%"></i></span>
       <span class="v num ${dir(r.pct)}">${pct(r.pct)}</span></div>`).join("");
-    return `<p class="hint" style="margin:0 0 8px">${s.count}개 업종 중 <span class="up">${s.up}개 상승</span> · <span class="down">${s.down}개 하락</span></p>
+    return `<p class="hint" style="margin:0 0 8px">${s.count}개 업종 ETF 중 <span class="up">${s.up}개 상승</span> · <span class="down">${s.down}개 하락</span></p>
       <div class="sect"><div><h3 class="mini-h">강한 업종</h3>${col(s.top.filter((r) => r.pct > 0)) || `<p class="hint">오른 업종이 없어요.</p>`}</div><div><h3 class="mini-h">약한 업종</h3>${col(s.bottom.filter((r) => r.pct < 0)) || `<p class="hint">내린 업종이 없어요.</p>`}</div></div>`;
   }
 
@@ -494,7 +494,7 @@
     if (!ex.flow && !ex.sectors && !ex.bigcaps) return "";
     return `<section class="panel mp" aria-label="수급·시황">
       <div class="mp-col"><h2 class="sec">투자자별 순매수 <small>억원</small></h2>${flowHTML()}</div>
-      <div class="mp-col"><h2 class="sec">업종 등락 <small>네이버 금융 업종</small></h2>${sectorsHTML()}</div>
+      <div class="mp-col"><h2 class="sec">업종 등락 <small>업종 대표 ETF 기준</small></h2>${sectorsHTML()}</div>
       <div class="mp-col"><h2 class="sec">대형주 <small>전일 대비</small></h2>${bigcapsHTML()}</div>
     </section>`;
   }
