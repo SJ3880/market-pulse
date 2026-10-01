@@ -1,0 +1,687 @@
+# -*- coding: utf-8 -*-
+"""
+Market Pulse 수집기
+ - 신뢰 매체 뉴스(RSS)와 시장지표를 모아 '지금 가장 이슈인 것'을 점수화해 JSON 스냅샷으로 저장합니다.
+ - GitHub Actions 에서 1분 간격으로 반복 실행되고, 결과는 저장소의 `data` 브랜치에 올라갑니다.
+
+실행 예)
+  python collector/collect.py --once --no-push          # 한 번만 수집해서 ./out 에 저장 (로컬 확인용)
+  python collector/collect.py --loop-minutes 55          # 55분 동안 1분마다 수집 + data 브랜치 업로드
+외부 라이브러리 없이 파이썬 기본 기능만 사용합니다.
+"""
+import argparse
+import concurrent.futures as cf
+import datetime as dt
+import email.utils
+import gzip
+import html.entities
+import hashlib
+import html
+import json
+import math
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+import xml.etree.ElementTree as ET
+from collections import Counter, defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sources as S  # noqa: E402
+
+KST = dt.timezone(dt.timedelta(hours=9))
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 MarketPulseBot/1.0")
+MAX_AGE_H = 36           # 이보다 오래된 기사는 버림
+TOP_N = 30               # 탭별 이슈 개수
+FIXTURE_DIR = os.environ.get("FIXTURE_DIR")  # 테스트용: 실제 인터넷 대신 파일에서 읽기
+
+
+def log(*a):
+    print(dt.datetime.now(KST).strftime("%H:%M:%S"), *a, flush=True)
+
+
+# ─────────────────────────── 네트워크 ───────────────────────────
+def http_get(url, timeout=12, fixture_key=None):
+    if FIXTURE_DIR:
+        p = os.path.join(FIXTURE_DIR, (fixture_key or hashlib.md5(url.encode()).hexdigest()))
+        for ext in ("", ".xml", ".json"):
+            if os.path.exists(p + ext):
+                with open(p + ext, "rb") as f:
+                    return f.read()
+        raise FileNotFoundError(f"fixture 없음: {fixture_key}")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA, "Accept": "*/*", "Accept-Encoding": "gzip",
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            data = gzip.decompress(data)
+        return data
+
+
+# ─────────────────────────── 피드 파싱 ───────────────────────────
+TAG_RE = re.compile(r"<[^>]+>")
+WS_RE = re.compile(r"\s+")
+
+
+def strip_html(s):
+    if not s:
+        return ""
+    s = html.unescape(TAG_RE.sub(" ", html.unescape(s)))
+    return WS_RE.sub(" ", s).strip()
+
+
+def local(tag):
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def parse_time(s):
+    if not s:
+        return None
+    s = re.sub(r"\b(KST|GMT\+0?9(:00)?)\b", "+0900", s.strip())
+    try:
+        t = email.utils.parsedate_to_datetime(s)
+        if t.tzinfo is None:  # RFC822 의 '-0000' 등 시간대 미상 → UTC 로 간주
+            t = t.replace(tzinfo=dt.timezone.utc)
+        return t.timestamp()
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            t = dt.datetime.strptime(s.replace("Z", "+00:00"), fmt)
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=KST)
+            return t.timestamp()
+        except Exception:
+            continue
+    return None
+
+
+XML_ENT = {"amp", "lt", "gt", "quot", "apos"}
+
+
+ENT_RE = re.compile(r"&(#\d+;|#x[0-9a-fA-F]+;|(\w+);)?")
+
+
+def fix_entities(t):
+    def sub(m):
+        if m.group(1) is None:
+            return "&amp;"            # 맨 & 기호
+        name = m.group(2)
+        if name is None or name in XML_ENT:
+            return m.group(0)         # 숫자 엔티티 / XML 기본 엔티티는 그대로
+        cp = html.entities.name2codepoint.get(name)
+        return f"&#{cp};" if cp else "&amp;" + name + ";"
+    return ENT_RE.sub(sub, t)
+
+
+def decode_xml(raw):
+    if isinstance(raw, str):
+        return raw
+    m = re.match(rb"\s*<\?xml[^>]*encoding=[\"']([\w\-]+)[\"']", raw)
+    enc = (m.group(1).decode().lower() if m else "utf-8")
+    if enc in ("euc-kr", "ks_c_5601-1987", "ksc5601"):
+        enc = "cp949"
+    try:
+        return raw.decode(enc)
+    except (LookupError, UnicodeDecodeError):
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return raw.decode("cp949", errors="replace")
+
+
+def parse_feed(raw):
+    """RSS 2.0 / Atom 을 공통 형식(list of dict)으로."""
+    txt = decode_xml(raw)
+    txt = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", txt)
+    txt = re.sub(r"^\s*<\?xml[^>]*\?>", "", txt)
+    # CDATA 밖에서만 엔티티 정리 (&nbsp; 같은 HTML 엔티티는 XML 파서가 거부)
+    parts = re.split(r"(<!\[CDATA\[.*?\]\]>)", txt, flags=re.S)
+    txt = "".join(p if p.startswith("<![CDATA[") else fix_entities(p) for p in parts)
+    root = ET.fromstring(txt)
+    out = []
+    for el in root.iter():
+        name = local(el.tag)
+        if name not in ("item", "entry"):
+            continue
+        d = {"title": "", "link": "", "pub": None, "desc": "", "desc_html": "", "source": "", "source_url": ""}
+        for c in el:
+            n = local(c.tag)
+            if n == "title":
+                d["title"] = strip_html(c.text or "")
+            elif n == "link":
+                rel = c.get("rel", "alternate")
+                v = (c.text or c.get("href") or "").strip()
+                if v and (rel == "alternate" or not d["link"]):
+                    d["link"] = html.unescape(v)
+            elif n in ("pubDate", "published", "updated", "date") and not d["pub"]:
+                d["pub"] = parse_time(c.text)
+            elif n in ("description", "summary", "content") and not d["desc_html"]:
+                d["desc_html"] = c.text or ""
+                d["desc"] = strip_html(c.text or "")
+            elif n == "source":
+                d["source"] = (c.text or "").strip()
+                d["source_url"] = c.get("url", "")
+        if d["title"] and d["link"]:
+            out.append(d)
+    return out
+
+
+GN_RELATED_RE = re.compile(r'<a href="([^"]+)"[^>]*>(.*?)</a>(?:&nbsp;|\s)*<font[^>]*>(.*?)</font>', re.S)
+
+
+def normalize_outlet(name):
+    name = (name or "").strip()
+    name = S.OUTLET_ALIASES.get(name, name)
+    if name in S.OUTLETS:
+        return name
+    # 'xxx 뉴스', 'www.xxx.com' 같은 변형 처리
+    for k in S.OUTLETS:
+        if name.lower() == k.lower():
+            return k
+    base = re.sub(r"\s*(뉴스|신문|닷컴)$", "", name)
+    if base in S.OUTLETS:
+        return base
+    return name
+
+
+EXCLUDE_RE = [re.compile(p) for p in S.EXCLUDE_PATTERNS]
+
+
+def excluded(title):
+    return any(r.search(title) for r in EXCLUDE_RE)
+
+
+def items_from_feed(feed, raw, now):
+    entries = parse_feed(raw)
+    items = []
+    for e in entries:
+        title, outlet = e["title"], feed.get("outlet", "")
+        if feed["kind"] == "gnews":
+            outlet = e["source"]
+            if not outlet and " - " in title:
+                outlet = title.rsplit(" - ", 1)[1]
+            suffix = " - " + outlet
+            if outlet and title.endswith(suffix):
+                title = title[: -len(suffix)].strip()
+        outlet = normalize_outlet(outlet)
+        if outlet not in S.OUTLETS:
+            continue  # 화이트리스트 밖 매체 제외
+        ts = e["pub"] or now
+        if now - ts > MAX_AGE_H * 3600 or ts - now > 3600:
+            continue
+        if excluded(title) or not re.match(r"https?://", e["link"]):
+            continue
+        group = None
+        related = []
+        if feed["kind"] == "gnews" and e["desc_html"]:
+            for href, rt, ro in GN_RELATED_RE.findall(html.unescape(e["desc_html"])):
+                ro_n = normalize_outlet(strip_html(ro))
+                rt = strip_html(rt)
+                if ro_n in S.OUTLETS and rt and not excluded(rt) and href.startswith("http"):
+                    related.append((href, rt, ro_n))
+            if len(related) > 1:
+                group = hashlib.md5(e["link"].encode()).hexdigest()[:10]
+        summary = "" if feed["kind"] == "gnews" else e["desc"][:220]
+        base = dict(feed=feed["id"], tab=feed.get("tab"), sub=feed.get("sub"), lang=feed.get("lang", "ko"),
+                    official=feed.get("official", False), top=feed.get("top", False), group=group)
+        if related:
+            for href, rt, ro in related:
+                items.append(dict(base, title=rt, link=href, outlet=ro, ts=ts, summary=""))
+        else:
+            items.append(dict(base, title=title, link=e["link"], outlet=outlet, ts=ts, summary=summary))
+    return items
+
+
+def fetch_all_feeds(now):
+    results, status = [], []
+
+    def work(feed):
+        t0 = time.time()
+        try:
+            raw = http_get(feed["url"], fixture_key=feed["id"])
+            its = items_from_feed(feed, raw, now)
+            return feed, its, None, time.time() - t0
+        except Exception as ex:  # noqa: BLE001
+            return feed, [], f"{type(ex).__name__}: {str(ex)[:120]}", time.time() - t0
+
+    with cf.ThreadPoolExecutor(max_workers=12) as ex:
+        for feed, its, err, sec in ex.map(work, S.FEEDS):
+            results.extend(its)
+            status.append(dict(id=feed["id"], label=feed["label"], ok=err is None, count=len(its),
+                               ms=int(sec * 1000), error=err))
+    return results, status
+
+
+# ─────────────────────────── 분류 ───────────────────────────
+def contains_any(text, words):
+    tl = text.lower()
+    return sum(1 for w in words if w.lower() in tl)
+
+
+def classify(item):
+    t = item["title"] + " " + item.get("summary", "")[:80]
+    scores = {tab: contains_any(t, words) for tab, words in S.TAB_RULES.items()}
+    if item["tab"]:
+        tab = item["tab"]
+        # 피드 탭이 정해져 있어도 부동산 신호가 훨씬 강하면 이동 (예: 한경 경제 피드의 집값 기사)
+        best = max(scores, key=scores.get)
+        if best != tab and scores[best] >= 2 and scores.get(tab, 0) == 0:
+            tab = best
+    else:
+        best = max(scores, key=scores.get)
+        tab = best if scores[best] > 0 else None
+    sub = None
+    if tab == "stocks":
+        if item.get("sub") == "ipo" or contains_any(t, S.IPO_WORDS):
+            sub = "ipo"
+        elif item["lang"] == "en" or contains_any(t, S.GLOBAL_WORDS):
+            sub = "global"
+        else:
+            sub = "kr"
+    return tab, sub
+
+
+# ─────────────────────────── 묶기(클러스터링) ───────────────────────────
+PARTICLE_RE = re.compile(
+    r"(으로|에서|까지|부터|에게|보다|처럼|이나|이며|이고|이다|했다|한다|된다|됐다|하는|하고|해서|"
+    r"은|는|이|가|을|를|에|의|도|로|와|과|만|나)$")
+STOP = set("""종합 속보 단독 오늘 내일 올해 지난해 이번 관련 대한 위해 이후 전망 기자 뉴스 등 것 수 위 중 및 더 첫 또 왜 다시
+결국 사실상 현장 영상 포토 the a an of to in on for and as at by with from is are be its it this that after amid
+says said will new us 美 韓 中 日 vs 그 이 저 한 두 세 일 월 년 개 명 억 조 원 만 달러 1일 2일 국내 시장 투자 경제 정부
+상승 하락 앞두고 몰려 연속 촉각 주목 분석 전문가 우려 기대 기대감 가능성 발표 확대 축소 증가 감소 계속 여전 지속 돌파
+shares stock stocks rise rises rising fall falls falling jump jumps jumped earnings report reports ahead futures
+prices price after before beat beats miss misses market markets rally gains gain losses loss week today year how what why
+강세 약세 마감 출발 개장 기록 최대 최고 최저 만에 넘어 넘었 주간 이번주 지난주 비상 우려에 for over up down""".split())
+
+
+def tokens(title, keep_num=False):
+    raw = re.findall(r"[가-힣]+|[A-Za-z][A-Za-z\-&\.]+|\d[\d\.,]*%?", title)
+    out = []
+    for w in raw:
+        if re.match(r"[가-힣]", w) and len(w) > 2:
+            w = PARTICLE_RE.sub("", w)
+        w = w.lower()
+        if re.match(r"\d", w):
+            if keep_num and len(w) >= 2:  # '8%', '1,420원' 같은 수치는 같은 사건 판별에 유용
+                out.append(w)
+            continue
+        if len(w) < 2 or (w.isascii() and len(w) < 3) or w in STOP:
+            continue
+        out.append(w)
+    return out
+
+
+def bigrams(title):
+    s = re.sub(r"[^가-힣A-Za-z0-9]", "", title.lower())
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+OPPOSITES = [("상승", "하락"), ("확대", "축소"), ("매수", "매도"), ("급등", "급락"), ("인상", "인하"), ("증가", "감소"),
+             ("반등", "하락"), ("강세", "약세"), ("rise", "fall"), ("gain", "drop"), ("beat", "miss"),
+             ("jump", "fall"), ("hike", "cut")]
+
+
+def opposite(ta, tb):
+    la, lb = ta.lower(), tb.lower()
+    for x, y in OPPOSITES:
+        if (x in la and y in lb and y not in la) or (y in la and x in lb and x not in la):
+            return True
+    return False
+
+
+def similar(a, b):
+    if opposite(a["title"], b["title"]):
+        return False
+    shared = len(a["tk"] & b["tk"])
+    if a["title"].isascii() and b["title"].isascii():  # 영문은 글자쌍이 우연히 겹치기 쉬워 단어 기준만
+        return shared >= 3 and shared / max(1, min(len(a["tk"]), len(b["tk"]))) >= 0.6
+    ja = len(a["bg"] & b["bg"]) / max(1, len(a["bg"] | b["bg"]))
+    if ja >= 0.38:
+        return True
+    if shared >= 3 and shared / max(1, min(len(a["tk"]), len(b["tk"]))) >= 0.5:
+        return True
+    if shared >= 2 and ja >= 0.3:
+        return True
+    small = a["bg"] if len(a["bg"]) <= len(b["bg"]) else b["bg"]
+    if shared >= 2 and len(a["bg"] & b["bg"]) / max(1, len(small)) >= 0.6:
+        return True
+    return False
+
+
+def cluster(items):
+    for it in items:
+        it["bg"] = bigrams(it["title"])
+        it["tk"] = set(tokens(it["title"], keep_num=True))
+    items.sort(key=lambda x: -x["ts"])
+    clusters = []
+    by_group = {}
+    for it in items:
+        target = None
+        if it.get("group") and it["group"] in by_group:
+            target = by_group[it["group"]]
+        else:
+            for c in clusters:
+                # 대표 기사 + 최근 합류 기사 몇 개와 비교
+                if any(similar(it, m) for m in c["members"][:3]):
+                    target = c
+                    break
+        if target is None:
+            target = {"members": []}
+            clusters.append(target)
+        target["members"].append(it)
+        if it.get("group"):
+            by_group[it["group"]] = target
+    return clusters
+
+
+# ─────────────────────────── 점수화 ───────────────────────────
+def impact_hits(text):
+    tl = text.lower()
+    return [k for k in S.IMPACT_KEYWORDS if k.lower() in tl]
+
+
+def score_cluster(c, now):
+    mem = c["members"]
+    # 같은 매체 중복 제거 (가장 최근 것)
+    by_outlet = {}
+    for m in mem:
+        if m["outlet"] not in by_outlet or m["ts"] > by_outlet[m["outlet"]]["ts"]:
+            by_outlet[m["outlet"]] = m
+    uniq = sorted(by_outlet.values(), key=lambda m: -m["ts"])
+    outlets = len(uniq)
+    newest = max(m["ts"] for m in mem)
+    first = min(m["ts"] for m in mem)
+    age_h = max(0.0, (now - newest) / 3600)
+    recent2h = len({m["outlet"] for m in mem if now - m["ts"] <= 7200})
+    auth = max(S.OUTLETS.get(m["outlet"], 0.7) for m in mem)
+    # 대표 기사: 한국어 > 권위 > 최신
+    rep = sorted(uniq, key=lambda m: (m["lang"] != "ko", -S.OUTLETS.get(m["outlet"], .7), -m["ts"]))[0]
+    hits = []
+    for m in uniq[:5]:
+        for h in impact_hits(m["title"]):
+            if h not in hits:
+                hits.append(h)
+    is_top = any(m.get("top") for m in mem)
+
+    coverage = 1 + 1.5 * math.log(1 + outlets)
+    recency = 0.3 + 0.7 * math.exp(-age_h / 6)
+    impact = 1 + 0.12 * min(3, len(hits))
+    score = coverage * recency * auth * impact * (1.15 if is_top else 1.0)
+
+    reasons = [f"{outlets}개 매체 보도"]
+    if recent2h >= 3:
+        reasons.append(f"최근 2시간 {recent2h}곳")
+    if is_top:
+        reasons.append("포털 주요뉴스")
+    if hits:
+        reasons.append("키워드 " + ", ".join(hits[:2]))
+
+    summary = rep.get("summary") or next((m["summary"] for m in uniq if m.get("summary")), "")
+    subs = Counter(m.get("_sub") for m in mem if m.get("_sub"))
+    return dict(
+        title=rep["title"], link=rep["link"], outlet=rep["outlet"], ts=int(newest), first_ts=int(first),
+        summary=summary, outlets=[m["outlet"] for m in uniq], count=outlets,
+        articles=[dict(title=m["title"], link=m["link"], outlet=m["outlet"], ts=int(m["ts"])) for m in uniq[:10]],
+        score=round(score, 3), reasons=reasons, keywords=hits[:4],
+        rising=recent2h >= 3 and (now - first) < 3 * 3600,
+        sub=subs.most_common(1)[0][0] if subs else None,
+        _bg=list(rep["bg"]),
+    )
+
+
+def top_keywords(issues, n=14):
+    cnt = Counter()
+    for iss in issues:
+        for a in iss["articles"][:4]:
+            for t in set(tokens(a["title"])):
+                cnt[t] += iss["score"]
+    generic = {"코스피", "부동산", "아파트", "증시", "주가", "금리", "stock", "market", "stocks", "markets"}
+    out = []
+    for w, v in cnt.most_common(60):
+        if len(out) >= n:
+            break
+        if any(w != o and w in o for o, _ in out):
+            continue
+        out.append((w, round(v, 2)))
+    # 너무 일반적인 단어는 뒤로
+    out.sort(key=lambda x: (x[0] in generic, -x[1]))
+    return out
+
+
+def rank_changes(issues, prev):
+    """직전 스냅샷 대비 순위 변화 (새 진입/상승/하락)."""
+    prev_list = [(set(p.get("_bg", [])), p.get("rank", 99)) for p in prev or []]
+    for i, iss in enumerate(issues):
+        iss["rank"] = i + 1
+        bg = set(iss["_bg"])
+        best, best_rank = 0, None
+        for pbg, prank in prev_list:
+            j = len(bg & pbg) / max(1, len(bg | pbg))
+            if j > best:
+                best, best_rank = j, prank
+        if best >= 0.4 and best_rank is not None:
+            iss["delta"] = best_rank - iss["rank"]
+            iss["is_new"] = False
+        else:
+            iss["delta"] = 0
+            iss["is_new"] = bool(prev_list)
+
+
+# ─────────────────────────── 시장지표 ───────────────────────────
+def fetch_quote(entry):
+    group, sym, name, digits, unit = entry
+    last_err = None
+    for host in ("query1", "query2"):
+        url = (f"https://{host}.finance.yahoo.com/v8/finance/chart/{urllib.request.quote(sym)}"
+               f"?range=1d&interval=5m&includePrePost=false")
+        try:
+            j = json.loads(http_get(url, timeout=8, fixture_key="q_" + re.sub(r"\W", "_", sym)))
+            r = j["chart"]["result"][0]
+            meta = r["meta"]
+            closes = [c for c in (r.get("indicators", {}).get("quote", [{}])[0].get("close") or []) if c is not None]
+            price = meta.get("regularMarketPrice") or (closes[-1] if closes else None)
+            prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+            if price is None:
+                raise ValueError("no price")
+            scale = 0.1 if sym == "^TNX" and price > 20 else 1  # 일부 응답은 10배 표기
+            if sym == "JPYKRW=X":
+                scale = 100  # 원/100엔
+            price *= scale
+            prev = prev * scale if prev else None
+            spark = [round(c * scale, 4) for c in closes]
+            if len(spark) > 60:
+                step = len(spark) / 60
+                spark = [spark[int(i * step)] for i in range(60)] + [spark[-1]]
+            chg = price - prev if prev else None
+            return dict(sym=sym, name=name, group=group, digits=digits, unit=unit, price=round(price, 4),
+                        prev=round(prev, 4) if prev else None, change=round(chg, 4) if chg is not None else None,
+                        pct=round(chg / prev * 100, 3) if prev else None, spark=spark,
+                        ts=meta.get("regularMarketTime"), tz=meta.get("exchangeTimezoneName"))
+        except Exception as ex:  # noqa: BLE001
+            last_err = ex
+    return dict(sym=sym, name=name, group=group, digits=digits, unit=unit, error=str(last_err)[:80])
+
+
+def fetch_markets():
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(fetch_quote, S.MARKETS))
+
+
+# ─────────────────────────── 스냅샷 생성 ───────────────────────────
+def build_snapshot(prev_snapshot=None):
+    now = time.time()
+    t0 = time.time()
+    items, status = fetch_all_feeds(now)
+    markets = fetch_markets()
+
+    # 링크 중복 제거
+    seen, uniq = set(), []
+    for it in items:
+        key = re.sub(r"([?&])(utm_[^=&]*|call_from|from|ref)=[^&#]*", r"\1", it["link"]).split("#")[0].rstrip("?&")
+        k2 = (it["outlet"], re.sub(r"\W", "", it["title"])[:40])
+        if key in seen or k2 in seen:
+            continue
+        seen.add(key)
+        seen.add(k2)
+        uniq.append(it)
+
+    official, by_tab = [], defaultdict(list)
+    for it in uniq:
+        if it["official"]:
+            official.append(it)
+            continue
+        tab, sub = classify(it)
+        if tab:
+            it["_sub"] = sub
+            by_tab[tab].append(it)
+
+    tabs = {}
+    prev_tabs = (prev_snapshot or {}).get("tabs", {})
+    for tab in ("economy", "stocks", "realestate"):
+        cl = cluster(by_tab.get(tab, []))
+        issues = [score_cluster(c, now) for c in cl]
+        issues.sort(key=lambda x: -x["score"])
+        issues = issues[:TOP_N]
+        rank_changes(issues, prev_tabs.get(tab, {}).get("issues"))
+        mx = issues[0]["score"] if issues else 1
+        for iss in issues:
+            iss["heat"] = round(100 * iss["score"] / mx)
+        tabs[tab] = dict(issues=issues, keywords=top_keywords(issues), total_articles=len(by_tab.get(tab, [])))
+
+    official.sort(key=lambda x: -x["ts"])
+    policy = [dict(title=o["title"], link=o["link"], outlet=o["outlet"], ts=int(o["ts"]), summary=o.get("summary", ""))
+              for o in official[:60]]
+
+    snap = dict(
+        version=1,
+        generated_at=int(now),
+        generated_kst=dt.datetime.fromtimestamp(now, KST).strftime("%Y-%m-%d %H:%M:%S"),
+        took_ms=int((time.time() - t0) * 1000),
+        markets=markets, tabs=tabs, policy=policy, sources=status,
+        method=("이슈 점수 = 보도 매체 수(로그) × 최신성(6시간 반감) × 출처 권위 × 시장영향 키워드 가점"
+                " × 포털 주요뉴스 가점. 화이트리스트 매체만 집계, 같은 매체 중복 보도는 1회로 계산."),
+    )
+    return snap
+
+
+def stamp_of(ts):
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y%m%d-%H%M")
+
+
+# ─────────────────────────── 업로드(data 브랜치) ───────────────────────────
+def sh(cmd, cwd, check=True):
+    r = subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise RuntimeError(f"{cmd}\n{r.stdout}\n{r.stderr}")
+    return r.stdout.strip()
+
+
+class DataBranch:
+    """`data` 브랜치를 항상 커밋 1개로 유지하며 강제 푸시 (저장소가 커지지 않음)."""
+
+    def __init__(self, repo_dir, workdir):
+        self.dir = workdir
+        if os.path.exists(workdir):
+            shutil.rmtree(workdir)
+        os.makedirs(os.path.join(workdir, "snap"))
+        token, slug = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+        if token and slug:  # GitHub Actions 안에서는 토큰으로 직접 푸시
+            remote = f"https://x-access-token:{token}@github.com/{slug}.git"
+        else:
+            remote = sh("git config --get remote.origin.url", repo_dir)
+        sh("git init -q -b data", workdir)
+        sh(f"git remote add origin {remote}", workdir)
+        # actions/checkout 이 저장한 인증 헤더 복사
+        for line in sh("git config --get-regexp '^http\\..*extraheader' || true", repo_dir, check=False).splitlines():
+            k, v = line.split(" ", 1)
+            sh(f"git config {k} '{v}'", workdir)
+        sh("git config user.name 'market-pulse-bot'", workdir)
+        sh("git config user.email 'market-pulse-bot@users.noreply.github.com'", workdir)
+        self.first = True
+
+    def load_previous(self):
+        try:
+            sh("git fetch -q --depth 1 origin data", self.dir)
+            return json.loads(sh("git show FETCH_HEAD:latest.json", self.dir))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def publish(self, snap):
+        st = stamp_of(snap["generated_at"])
+        snap["stamp"] = st
+        body = json.dumps(snap, ensure_ascii=False, separators=(",", ":"))
+        with open(os.path.join(self.dir, "snap", st + ".json"), "w", encoding="utf-8") as f:
+            f.write(body)
+        with open(os.path.join(self.dir, "latest.json"), "w", encoding="utf-8") as f:
+            f.write(body)
+        snaps = sorted(os.listdir(os.path.join(self.dir, "snap")))
+        for old in snaps[:-20]:
+            os.remove(os.path.join(self.dir, "snap", old))
+        sh("git add -A", self.dir)
+        amend = "" if self.first else "--amend"
+        sh(f"git commit -q {amend} -m 'snapshot {st}'", self.dir)
+        self.first = False
+        sh("git push -q -f origin HEAD:data", self.dir)
+        return st
+
+
+def interval_now():
+    h = dt.datetime.now(KST).hour
+    return 60 if 6 <= h < 24 else 300  # 심야(0~6시)는 5분 간격
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--once", action="store_true")
+    ap.add_argument("--no-push", action="store_true")
+    ap.add_argument("--loop-minutes", type=float, default=55)
+    ap.add_argument("--out", default="out")
+    a = ap.parse_args()
+
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db = None if a.no_push else DataBranch(repo_dir, os.path.join(repo_dir, "..", "_market_pulse_data"))
+    prev = db.load_previous() if db else None
+    deadline = time.time() + a.loop_minutes * 60
+
+    while True:
+        started = time.time()
+        try:
+            snap = build_snapshot(prev)
+            n_ok = sum(1 for s in snap["sources"] if s["ok"])
+            if db:
+                st = db.publish(snap)
+            else:
+                os.makedirs(os.path.join(a.out, "snap"), exist_ok=True)
+                st = stamp_of(snap["generated_at"])
+                snap["stamp"] = st
+                body = json.dumps(snap, ensure_ascii=False, indent=1)
+                for p in (os.path.join(a.out, "latest.json"), os.path.join(a.out, "snap", st + ".json")):
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write(body)
+            log(f"[{st}] 소스 {n_ok}/{len(snap['sources'])} 성공 · 이슈 "
+                + " / ".join(f"{k}:{len(v['issues'])}" for k, v in snap["tabs"].items())
+                + f" · {snap['took_ms']}ms")
+            for s in snap["sources"]:
+                if not s["ok"]:
+                    log(f"   ✗ {s['label']}: {s['error']}")
+            prev = snap
+        except Exception as ex:  # noqa: BLE001
+            log("수집 실패:", repr(ex))
+        if a.once:
+            break
+        # 다음 수집은 '정각 분'(심야엔 5분 단위)에 시작 → 화면은 매분 40초에 확인
+        step = interval_now()
+        nxt = (int(time.time() // step) + 1) * step
+        if nxt > deadline:
+            break
+        time.sleep(max(1, nxt - time.time()))
+
+
+if __name__ == "__main__":
+    main()
