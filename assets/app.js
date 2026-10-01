@@ -563,13 +563,18 @@
   }
 
   const SERIES_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)"];
-  function weekLabel(lab) { const m = String(lab).match(/(\d+)년\s*(\d+)월\s*(\d+)주/); return m ? `${m[2]}월 ${m[3]}주` : String(lab).slice(-6); }
+  function weekLabel(lab) {
+    const m = String(lab).match(/(\d{4})년\s*(\d+)월(?:\s*(\d+)주)?/);
+    if (!m) return String(lab).slice(-6);
+    return m[3] ? `${+m[2]}월 ${m[3]}주` : `${m[1].slice(2)}.${String(m[2]).padStart(2, "0")}`;
+  }
 
   function realestateIndicatorsHTML() {
     const re = XT().realestate, rates = XT().rates?.series || {};
     const parts = [];
     if (re?.series) {
-      for (const [kind, title] of [["sale", "아파트 매매가격 주간 변동률"], ["jeonse", "아파트 전세가격 주간 변동률"]]) {
+      const per = re.cycle === "MM" ? "월간" : "주간";
+      for (const [kind, title] of [["sale", `아파트 매매가격 ${per} 변동률`], ["jeonse", `아파트 전세가격 ${per} 변동률`]]) {
         const ser = re.series[kind] || {};
         const regions = ["전국", "수도권", "서울"].filter((r) => ser[r]?.length);
         if (!regions.length) continue;
@@ -602,7 +607,7 @@
     const small = one("mortgage", "주택담보대출 금리 (신규취급)", "한국은행·월별") + one("ktb3", "국고채 3년", "한국은행·일별");
     const smallNote = !small ? `<div class="chart ph"><p class="hint">${XT().rates?.missing_key ? "한국은행 인증키(ECOS_KEY)를 넣으면 주담대 금리·국고채 그래프가 표시돼요." : "금리 자료를 받는 중이에요."}</p></div>` : "";
     return `<section class="panel re-ind" aria-label="부동산 지표">
-      <div class="list-head"><div><h1>부동산 지표</h1><p>집값 흐름과 대출 금리를 한눈에 · 그래프에 마우스를 올리면 주별 값이 보여요</p></div></div>
+      <div class="list-head"><div><h1>부동산 지표</h1><p>집값 흐름과 대출 금리를 한눈에 · 그래프에 마우스를 올리면 시점별 값이 보여요</p></div></div>
       <div class="charts2">${parts.join("") || reNote}</div>
       <div class="charts2">${small || smallNote}</div>
     </section>`;
