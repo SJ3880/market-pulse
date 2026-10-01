@@ -586,7 +586,26 @@ def _entity_tokens(title, generic):
     return {ENTITY_ALIASES.get(w, w) for w in tokens(t) if len(w) >= 2 and w not in generic}
 
 
-def fold_duplicates(issues, generic):
+TAB_ORDER = ("economy", "stocks", "realestate", "ipo", "ib")
+# 경제·주식·부동산에서 '같은 이슈' 판단 때 무시하는 흔한 단어
+GENERAL_GENERIC = set("""환율 금리 기준금리 물가 코스피 코스닥 증시 외국인 기관 개인 순매수 순매도 아파트 서울 집값 전세 월세 매매
+부동산 미국 연준 한국 정부 한은 대출 가계 수출 반도체 주가 지수 상승 하락 급등 급락 마감 출발 시장 투자자 정책 규제
+대책 공급 분양 청약 거래 가격 경제 성장 경기 소비 고용 관세 무역 중국 일본 유럽 달러 원화 원달러 채권 국채 금값
+유가 실적 영업이익 매출 전년 대비 전망 우려 기대 영향 발표 확대 축소 최고 최저 사상 역대 주간 이번주 지난주 오늘""".split())
+
+
+def same_story(a, b):
+    """두 이슈가 같은 사건인지 (제목 유사도 또는 고유 단어 2개 이상 공유)."""
+    ta = {"title": a["title"], "bg": bigrams(a["title"]), "tk": set(tokens(a["title"], keep_num=True))}
+    tb = {"title": b["title"], "bg": bigrams(b["title"]), "tk": set(tokens(b["title"], keep_num=True))}
+    if similar(ta, tb):
+        return True
+    ea = _entity_tokens(a["title"], S.IPO_GENERIC_TOKENS | GENERAL_GENERIC)
+    eb = _entity_tokens(b["title"], S.IPO_GENERIC_TOKENS | GENERAL_GENERIC)
+    return len(ea & eb) >= 2
+
+
+def fold_duplicates(issues, generic, strict=False):
     """같은 회사·같은 딜을 다룬 이슈(예: 시리즈 기사 ①②③, 같은 회사 다른 각도)를 하나로 접고,
     접힌 기사들은 위 이슈의 '다른 보도' 목록으로 옮김."""
     toks = [_entity_tokens(i["title"], generic) for i in issues]
@@ -596,9 +615,16 @@ def fold_duplicates(issues, generic):
         rare = {w for w in ts if df[w] <= 8}
         host = None
         for k, kt in zip(kept, kept_toks):
-            if rare & kt:
-                host = k
-                break
+            shared = rare & kt
+            if not shared:
+                continue
+            if strict:
+                # 경제·주식·부동산: 고유 단어 2개 이상 겹치거나, 1개 겹치고 제목도 꽤 비슷할 때만
+                ja = len(bigrams(i["title"]) & bigrams(k["title"])) / max(1, len(bigrams(i["title"]) | bigrams(k["title"])))
+                if len(shared) < 2 and ja < 0.2:
+                    continue
+            host = k
+            break
         if host is None:
             kept.append(i)
             kept_toks.append(ts)
@@ -769,7 +795,8 @@ def build_snapshot(prev_snapshot=None):
 
     tabs = {}
     prev_tabs = (prev_snapshot or {}).get("tabs", {})
-    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
+    ranked = {}
+    for tab in TAB_ORDER:
         cl = cluster(by_tab.get(tab, []))
         issues = [score_cluster(c, now, TAB_HALF_LIFE.get(tab, 6)) for c in cl]
         # 시장 관련성 확인: 단독 보도는 관련 단어 2개 이상, 다수 보도는 1개 이상
@@ -780,18 +807,28 @@ def build_snapshot(prev_snapshot=None):
         elif tab == "ipo":
             issues = ipo_adjust(issues)
         issues.sort(key=lambda x: -x["score"])
-        issues = issues[:TAB_LIMIT.get(tab, TOP_N)]
+        # 같은 회사·같은 사건 반복 기사 접기 (탭 안)
+        issues = fold_duplicates(issues, S.IPO_GENERIC_TOKENS | GENERAL_GENERIC, strict=tab not in ("ipo", "ib"))
+        ranked[tab] = issues
+
+    # 탭 사이 중복: 더 구체적인 탭(IPO > IB > 부동산 > 주식 > 경제)에만 남김
+    taken = []
+    for tab in ("ipo", "ib", "realestate", "stocks", "economy"):
+        keep = []
+        for iss in ranked[tab]:
+            if any(same_story(iss, o) for o in taken):
+                continue
+            keep.append(iss)
+        ranked[tab] = keep
+        taken += keep[: TAB_LIMIT.get(tab, TOP_N)]
+
+    for tab in TAB_ORDER:
+        issues = ranked[tab][:TAB_LIMIT.get(tab, TOP_N)]
         rank_changes(issues, prev_tabs.get(tab, {}).get("issues"))
         mx = issues[0]["score"] if issues else 1
         for iss in issues:
             iss["heat"] = round(100 * iss["score"] / mx)
         tabs[tab] = dict(issues=issues, keywords=top_keywords(issues), total_articles=len(by_tab.get(tab, [])))
-
-    # 요약이 부족한 상위 이슈는 원문 앞부분으로 보강
-    try:
-        SM.enrich(tabs, http_get, SUM_CACHE)
-    except Exception as ex:  # noqa: BLE001
-        log("요약 보강 실패:", repr(ex))
 
     # 같은 발표를 여러 매체가 보도한 경우 하나로 묶기
     policy = []
@@ -811,6 +848,12 @@ def build_snapshot(prev_snapshot=None):
                            ts=int(max(m["ts"] for m in mem)), summary=summary))
     policy.sort(key=lambda x: -x["ts"])
     policy = policy[:60]
+
+    # 요약이 없거나 짧은 기사는 원문 앞부분으로 보강 (모든 탭 + 정책·발표)
+    try:
+        SM.enrich(tabs, http_get, SUM_CACHE, policy=policy, outlet_weight=lambda o: S.OUTLETS.get(o, 0.7))
+    except Exception as ex:  # noqa: BLE001
+        log("요약 보강 실패:", repr(ex))
 
     snap = dict(
         version=1,

@@ -12,9 +12,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 MAX_CHARS = 460          # 요약 최대 길이(약 2문단)
-ENRICH_TOP = 12          # 탭별 상위 몇 개 이슈까지 원문 보강
-MAX_FETCH_PER_RUN = 10   # 1분에 새로 여는 원문 수 상한
-CACHE_MAX = 800
+ENRICH_TOP = 30          # 탭별 몇 위까지 원문 보강 (사실상 전부)
+MAX_FETCH_PER_RUN = 14   # 1분에 새로 여는 원문 수 상한
+MAX_DECODE_PER_RUN = 10  # 1분에 새로 푸는 Google 링크 수 상한 (과도한 요청 방지)
+CACHE_MAX = 3000
 
 TAG_RE = re.compile(r"<[^>]+>")
 WS_RE = re.compile(r"[ \t\r\f\v]+")
@@ -111,40 +112,127 @@ def best_rss_summary(members, outlet_weight):
     return to_paragraphs(m["summary"]), {"outlet": m["outlet"], "link": m["link"], "title": m["title"]}
 
 
-def enrich(tabs, http_get, cache, log=print):
-    """요약이 부족한 상위 이슈를 원문 앞부분으로 보강. cache: {link: [시각, 요약]}"""
-    todo = []
-    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
-        for iss in tabs.get(tab, {}).get("issues", [])[:ENRICH_TOP]:
-            if len(iss.get("summary", "")) >= 150:
+# ─────────────────────────── Google 뉴스 링크 → 원문 주소 ───────────────────────────
+# Google 뉴스 RSS 링크는 실제 기사 주소를 감춰 둠. 뉴스 화면이 쓰는 방식 그대로 원문 주소를 받아 옴.
+GN_STATE = {"fail": 0, "pause_until": 0}
+GN_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+         "Chrome/126.0 Safari/537.36")
+
+
+def decode_gnews(link, timeout=8):
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    m = re.search(r"/articles/([^?/#]+)", link)
+    if not m:
+        return None
+    aid = m.group(1)
+    req = urllib.request.Request(f"https://news.google.com/rss/articles/{aid}?hl=ko&gl=KR&ceid=KR:ko",
+                                 headers={"User-Agent": GN_UA, "Accept-Language": "ko"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        page = r.read().decode("utf-8", "replace")
+    sig = re.search(r'data-n-a-sg="([^"]+)"', page)
+    ts = re.search(r'data-n-a-ts="([^"]+)"', page)
+    if not (sig and ts):
+        return None
+    inner = _json.dumps(["garturlreq", [["X", "X", ["X", "X"], None, None, 1, 1, "KR:ko", None, 1, None, None, None,
+                                          None, None, 0, 1], "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0],
+                         aid, int(ts.group(1)), sig.group(1)])
+    body = "f.req=" + urllib.parse.quote(_json.dumps([[["Fbv4je", inner, None, "generic"]]]))
+    req = urllib.request.Request("https://news.google.com/_/DotsSplashUi/data/batchexecute", data=body.encode(),
+                                 headers={"User-Agent": GN_UA,
+                                          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        txt = r.read().decode("utf-8", "replace")
+    m = re.search(r'garturlres\\",\\"(https?://[^"\\]+)', txt)
+    return m.group(1) if m else None
+
+
+def _resolve(a, cache):
+    """기사 원문 주소 (Google 링크면 풀어서). 실패가 이어지면 30분 쉼."""
+    link = a["link"]
+    if "news.google.com" not in link:
+        return link
+    key = "url:" + link
+    if key in cache:
+        return cache[key][1] or None
+    if time.time() < GN_STATE["pause_until"]:
+        return None
+    try:
+        url = decode_gnews(link)
+        GN_STATE["fail"] = 0
+    except Exception:  # noqa: BLE001
+        url = None
+        GN_STATE["fail"] += 1
+        if GN_STATE["fail"] >= 3:
+            GN_STATE["pause_until"] = time.time() + 1800
+            GN_STATE["fail"] = 0
+        return None
+    cache[key] = [int(time.time()), url or ""]
+    return url
+
+
+def enrich(tabs, http_get, cache, policy=None, log=print, outlet_weight=lambda o: 0.8):
+    """요약이 부족한 이슈를 원문 앞부분으로 보강 (모든 탭·정책 발표).
+    cache: {원문링크: [시각, 요약], 'url:'+구글링크: [시각, 원문주소]}"""
+    targets = []
+    for tab in ("ipo", "ib", "economy", "stocks", "realestate"):
+        targets += [("issue", iss) for iss in tabs.get(tab, {}).get("issues", [])[:ENRICH_TOP]]
+    targets += [("policy", p) for p in (policy or [])[:20]]
+
+    todo, decodes = [], 0
+    for kind, iss in targets:
+        have = iss.get("summary", "") if kind == "issue" else iss.get("lede", "")
+        if len(have) >= 150:
+            continue
+        arts = iss.get("articles") or [{"title": iss["title"], "link": iss["link"], "outlet": iss.get("media") or iss["outlet"]}]
+        # 직접 링크 우선, 그다음 권위 높은 매체
+        arts = sorted(arts, key=lambda a: ("news.google.com" in a["link"], -outlet_weight(a["outlet"])))[:3]
+        picked = None
+        for a in arts:
+            if "news.google.com" in a["link"] and ("url:" + a["link"]) not in cache:
+                if decodes >= MAX_DECODE_PER_RUN:
+                    continue
+                decodes += 1
+            url = _resolve(a, cache)
+            if not url:
                 continue
-            direct = [a for a in iss["articles"] if "news.google.com" not in a["link"]]
-            if not direct:
-                continue
-            a = direct[0]
-            hit = cache.get(a["link"])
+            hit = cache.get(url)
             if hit is not None:
                 if hit[1]:
-                    iss["summary"], iss["summary_src"] = hit[1], {"outlet": a["outlet"], "link": a["link"], "title": a["title"]}
-                continue
-            todo.append((iss, a))
+                    _apply(kind, iss, hit[1], a, url)
+                    picked = "done"
+                    break
+                continue  # 예전에 실패한 원문
+            picked = (a, url)
+            break
+        if picked and picked != "done":
+            todo.append((kind, iss, picked[0], picked[1]))
     todo = todo[:MAX_FETCH_PER_RUN]
 
-    def work(pair):
-        iss, a = pair
+    def work(job):
+        kind, iss, a, url = job
         try:
-            return iss, a, extract_lede(http_get(a["link"], timeout=6, fixture_key="art_" + hashlib.md5(a["link"].encode()).hexdigest()[:12]))
+            return job, extract_lede(http_get(url, timeout=6, fixture_key="art_" + hashlib.md5(url.encode()).hexdigest()[:12]))
         except Exception:  # noqa: BLE001
-            return iss, a, ""
+            return job, ""
 
     if todo:
         with ThreadPoolExecutor(max_workers=6) as ex:
-            for iss, a, text in ex.map(work, todo):
-                cache[a["link"]] = [int(time.time()), text]
-                if text and len(text) > len(iss.get("summary", "")):
-                    iss["summary"], iss["summary_src"] = text, {"outlet": a["outlet"], "link": a["link"], "title": a["title"]}
-    # 오래된 저장분 정리
+            for (kind, iss, a, url), text in ex.map(work, todo):
+                cache[url] = [int(time.time()), text]
+                if text:
+                    _apply(kind, iss, text, a, url)
     if len(cache) > CACHE_MAX:
         for k in sorted(cache, key=lambda k: cache[k][0])[: len(cache) - CACHE_MAX]:
             cache.pop(k, None)
     return len(todo)
+
+
+def _apply(kind, iss, text, a, url):
+    src = {"outlet": a["outlet"], "link": url, "title": a["title"]}
+    if kind == "issue":
+        if len(text) > len(iss.get("summary", "")):
+            iss["summary"], iss["summary_src"] = text, src
+    else:
+        iss["lede"], iss["lede_src"] = text, src
