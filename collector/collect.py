@@ -538,6 +538,11 @@ def ipo_adjust(issues):
         text = " ".join(a["title"] for a in i["articles"][:3])
         if _has_any(text, S.IPO_ROUTINE_WORDS) and not _has_any(text, S.IPO_ISSUE_WORDS):
             continue
+        ipo_terms = S.IPO_WORDS + [w for ws in S.IPO_PRIORITY.values() for w in ws] + ["상장", "listing", "go public"]
+        if not _has_any(text, ipo_terms):
+            continue  # IPO 와 무관한 기사(물가·회사채 등) 제외
+        if _has_any(text, S.IB_SUB_WORDS["ecm"]) and not _has_any(text, ["IPO", "상장", "프리IPO"]):
+            continue  # 일반 유상증자·CB 는 IB 탭 몫
         tags = [k for k, words in S.IPO_PRIORITY.items() if _has_any(text, words)]
         if tags:
             i["score"] = round(i["score"] * (1.15 + 0.05 * min(2, len(tags) - 1)), 3)
@@ -548,12 +553,25 @@ def ipo_adjust(issues):
         if any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
             i["score"] = round(i["score"] * 1.1, 3)
             i["reasons"].append("IB 전문매체")
+        elif i["count"] < 2 and not tags:
+            i["score"] = round(i["score"] * 0.7, 3)  # 일반매체 단독·유형 없는 기사는 아래로
         out.append(i)
     return out
 
 
 def ib_adjust(issues):
-    """IB 탭 우선순위: 여러 매체가 다룬 대형 딜 > 여러 매체 딜 > 단독 보도(아래쪽, 개수 채우기용)."""
+    """IB 탭 우선순위: 여러 매체가 다룬 대형 딜 > 여러 매체 딜 > 단독 보도(아래쪽, 개수 채우기용).
+    딜(유증·블록딜·메자닌·M&A) 단어나 금액이 없는 기사, 노조·행사·공시 모음 같은 기사는 제외."""
+    kept = []
+    for i in issues:
+        text = " ".join(a["title"] for a in i["articles"][:3])
+        if _has_any(text, S.IB_NOISE_WORDS):
+            continue
+        deal_words = S.IB_SUB_WORDS["ecm"] + S.IB_SUB_WORDS["mna"] + ["인수", "매각", "자본확충", "자본조달", "지분", "증자"]
+        if not (_has_any(text, deal_words) or BIG_AMOUNT_RE.search(text)):
+            continue
+        kept.append(i)
+    issues = kept
     for i in issues:
         text = " ".join(a["title"] for a in i["articles"][:3])
         if _is_big(text):
