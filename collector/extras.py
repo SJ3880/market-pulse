@@ -153,10 +153,14 @@ def _reb_find_tables(http_get, key):
             if page == 1:
                 _dbg("reb_tables", txt)
             break
+        names = [f"{r.get('STATBL_ID')}|{r.get('STATBL_NM')}|{r.get('DTACYCLE_CD') or r.get('DTACYCLE_NM')}"
+                 for r in rows if "아파트" in str(r.get("STATBL_NM", ""))]
+        _dbg(f"info-reb-tables-{page}", f"keys={list(rows[0].keys())}\n" + "\n".join(names[:300]))
         for r in rows:
-            nm = r.get("STATBL_NM", "")
-            cyc = r.get("DTACYCLE_CD", "") or r.get("DTACYCLE_NM", "")
-            if "아파트" not in nm or "주간" not in nm and "WK" not in cyc:
+            nm = str(r.get("STATBL_NM", ""))
+            cyc = str(r.get("DTACYCLE_CD", "") or r.get("DTACYCLE_NM", ""))
+            weekly = "WK" in cyc.upper() or "주" in cyc or "주간" in nm or "(주)" in nm
+            if "아파트" not in nm or not weekly:
                 continue
             kind = "sale" if "매매" in nm else "jeonse" if "전세" in nm else None
             if not kind:
@@ -316,6 +320,8 @@ def fetch_flow(http_get):
                     continue
                 vals, how = _flow_from_text(txt)
                 if vals:
+                    k = max(txt.find("personal"), txt.find("foreign"), txt.find("개인"))
+                    _dbg(f"info-flow-{mkt}", url + "\n" + txt[max(0, k - 800): k + 2200])
                     out[mkt] = vals
                     used[mkt] = f"{n}:{how}"
                     break
@@ -402,7 +408,6 @@ def collect_extras(http_get, fetch_quote):
         "flow": lambda: fetch_flow(http_get),
         "sectors": lambda: fetch_sectors(fetch_quote),
         "bigcaps": lambda: fetch_bigcaps(fetch_quote),
-        "fred10": lambda: fred_10y(http_get),
     }
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {k: ex.submit(f) for k, f in jobs.items()}
