@@ -405,7 +405,7 @@
         <table>${s.sources.map((x) => `<tr><td class="${x.ok ? "ok" : "bad"}">${x.ok ? "정상" : "실패"}</td><td>${esc(x.label)}</td><td class="num">${x.count}건</td><td>${esc(x.error || "")}</td></tr>`).join("")}</table>
       </details>
       <details><summary>추가 지표·알림 상태</summary>
-        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)", fred10: "미 국채 10년 검증 (FRED)" }).map(([k, nm]) => {
+        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)" }).map(([k, nm]) => {
           const v = (s.extras || {})[k] || {};
           const st = v.ok ? "정상" : v.missing_key ? "키 없음" : v.stale ? "지연" : "실패";
           return `<tr><td class="${v.ok ? "ok" : "bad"}">${st}</td><td>${nm}</td><td>${v.fetched_at ? ago(v.fetched_at) : ""}</td><td>${esc(v.error || "")}</td></tr>`;
