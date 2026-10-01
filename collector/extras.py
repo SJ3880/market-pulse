@@ -155,7 +155,6 @@ def _reb_find_tables(http_get, key):
             break
         names = [f"{r.get('STATBL_ID')}|{r.get('STATBL_NM')}|{r.get('DTACYCLE_CD') or r.get('DTACYCLE_NM')}"
                  for r in rows if "아파트" in str(r.get("STATBL_NM", ""))]
-        _dbg(f"info-reb-tables-{page}", f"keys={list(rows[0].keys())}\n" + "\n".join(names[:300]))
         for r in rows:
             nm = str(r.get("STATBL_NM", ""))
             cyc = str(r.get("DTACYCLE_CD", "") or r.get("DTACYCLE_NM", ""))
@@ -170,9 +169,26 @@ def _reb_find_tables(http_get, key):
                 found[kind] = (score, r.get("STATBL_ID"), nm, "변동률" in nm)
         if len(rows) < 1000:
             break
-    if not found:
-        raise RuntimeError("주간 아파트 통계표를 찾지 못함")
-    return {k: dict(id=v[1], name=v[2], is_rate=v[3]) for k, v in found.items()}
+    if found:
+        return {k: dict(id=v[1], name=v[2], is_rate=v[3], cycle="WK") for k, v in found.items()}
+    # Open API 에 주간 통계가 없으면 월간 '매매가격지수_아파트'·'전세가격지수_아파트' 사용
+    monthly = {}
+    for page in range(1, 6):
+        rows = _reb_rows(json.loads(_decode(http_get(f"{REB_BASE}SttsApiTbl.do?KEY={key}&Type=json&pIndex={page}&pSize=1000",
+                                                     timeout=15, fixture_key=f"reb_tbl_{page}"))))
+        for r in rows:
+            nm = str(r.get("STATBL_NM", ""))
+            if str(r.get("DTACYCLE_CD", "")).upper() != "MM" or any(w in nm for w in ("규모", "연령", "계절", "지역별", "통합")):
+                continue
+            if re.search(r"매매가격지수_아파트$", nm):
+                monthly.setdefault("sale", dict(id=r["STATBL_ID"], name=nm, is_rate=False, cycle="MM"))
+            elif re.search(r"(?<!월세)전세가격지수_아파트$", nm):
+                monthly.setdefault("jeonse", dict(id=r["STATBL_ID"], name=nm, is_rate=False, cycle="MM"))
+        if len(rows) < 1000:
+            break
+    if not monthly:
+        raise RuntimeError("아파트 가격지수 통계표를 찾지 못함")
+    return monthly
 
 
 def fetch_reb(http_get, key):
@@ -182,14 +198,22 @@ def fetch_reb(http_get, key):
     def run():
         tables = REB_META.get("tables") or _reb_find_tables(http_get, key)
         REB_META["tables"] = tables
-        result = {"tables": tables, "series": {}}
+        result = {"tables": tables, "series": {}, "cycle": next(iter(tables.values())).get("cycle", "WK")}
         for kind, t in tables.items():
             pts = {}
+            cyc = t.get("cycle", "WK")
             base = (f"{REB_BASE}SttsApiTblData.do?KEY={key}&Type=json&pSize=1000"
-                    f"&STATBL_ID={t['id']}&DTACYCLE_CD=WK")
+                    f"&STATBL_ID={t['id']}&DTACYCLE_CD={cyc}")
+            if cyc == "MM":  # 최근 약 2년치만 요청
+                now = dt.datetime.now(KST)
+                start = (now - dt.timedelta(days=800)).strftime("%Y%m")
+                base += f"&START_WRTTIME={start}&END_WRTTIME={now.strftime('%Y%m')}"
             first = json.loads(_decode(http_get(base + "&pIndex=1", timeout=15, fixture_key=f"reb_{kind}_1")))
             total = _find_key(first, "list_total_count")
-            if total:
+            if cyc == "MM":
+                last_page = max(1, -(-int(total or 1000) // 1000))
+                page_nos = list(range(2, min(last_page, 15) + 1))
+            elif total:
                 last_page = max(1, -(-int(total) // 1000))
                 page_nos = list(range(max(2, last_page - 7), last_page + 1))
             else:
@@ -230,7 +254,7 @@ def fetch_reb(http_get, key):
                 if not t["is_rate"]:  # 지수 → 주간 변동률(%)
                     vals = [(vals[i][0], vals[i][1], round((vals[i][2] / vals[i - 1][2] - 1) * 100, 3))
                             for i in range(1, len(vals)) if vals[i - 1][2]]
-                ser[region] = [[w, lab, v] for w, lab, v in vals[-30:]]
+                ser[region] = [[w, lab, v] for w, lab, v in vals[-(24 if cyc == "MM" else 30):]]
             if not ser:
                 _dbg("reb_" + kind + "_rows", txt)
             result["series"][kind] = ser
@@ -290,7 +314,10 @@ def _flow_from_text(txt):
         vals.setdefault(who, n)
     if len(vals) == 3:
         return {"individual": _num(vals["개인"]), "foreign": _num(vals["외국인"]), "institution": _num(vals["기관"])}, "kr-text"
-    # 3) JSON 키 (personalValue 등)
+    # 3) JSON 키 (네이버 dealTrendInfo 의 personalValue 등)
+    j = txt.find('"dealTrendInfo"')
+    if j >= 0:
+        txt = txt[j: j + 600]
     out = {}
     for k, pat in JSON_KEYS.items():
         m = re.search(r'"[A-Za-z]*' + pat + r'[A-Za-z]*"\s*:\s*"?([+\-−]?[\d,]+(?:\.\d+)?)', txt, re.I)
@@ -320,8 +347,6 @@ def fetch_flow(http_get):
                     continue
                 vals, how = _flow_from_text(txt)
                 if vals:
-                    k = max(txt.find("personal"), txt.find("foreign"), txt.find("개인"))
-                    _dbg(f"info-flow-{mkt}", url + "\n" + txt[max(0, k - 800): k + 2200])
                     out[mkt] = vals
                     used[mkt] = f"{n}:{how}"
                     break
