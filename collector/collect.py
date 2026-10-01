@@ -509,7 +509,8 @@ def score_cluster(c, now, half_life=6):
     return dict(
         title=rep["title"], link=rep["link"], outlet=rep["outlet"], ts=int(newest), first_ts=int(first),
         summary=summary, summary_src=summary_src, outlets=[m["outlet"] for m in uniq], count=outlets,
-        articles=[dict(title=m["title"], link=m["link"], outlet=m["outlet"], ts=int(m["ts"])) for m in uniq[:10]],
+        articles=[dict(title=m["title"], link=m["link"], outlet=m["outlet"], ts=int(m["ts"]), lang=m.get("lang", "ko"))
+                  for m in uniq[:10]],
         score=round(score, 3), reasons=reasons, keywords=hits[:4],
         rising=recent2h >= 3 and (now - first) < 3 * 3600,
         sub=subs.most_common(1)[0][0] if subs else None,
@@ -527,7 +528,7 @@ def _is_big(text):
 
 def _has_any(text, words):
     tl = text.lower()
-    return any(w.lower() in tl for w in words)
+    return any(_has(w, tl) for w in words)  # 영문은 단어 경계로 ('SPAC' 이 'space' 에 걸리지 않게)
 
 
 def ipo_adjust(issues):
@@ -556,7 +557,60 @@ def ipo_adjust(issues):
         elif i["count"] < 2 and not tags:
             i["score"] = round(i["score"] * 0.7, 3)  # 일반매체 단독·유형 없는 기사는 아래로
         out.append(i)
-    return out
+    out.sort(key=lambda x: -x["score"])
+    out = fold_duplicates(out, S.IPO_GENERIC_TOKENS)
+    # 국내 90% 이상: 해외 이슈는 최대 IPO_FOREIGN_MAX 개
+    dom, frn = [], []
+    for i in out:
+        (frn if is_foreign_ipo(i) else dom).append(i)
+    for i in frn[: S.IPO_FOREIGN_MAX]:
+        i["reasons"].append("해외")
+    return sorted(dom + frn[: S.IPO_FOREIGN_MAX], key=lambda x: -x["score"])
+
+
+def is_foreign_ipo(i):
+    text = " ".join(a["title"] for a in i["articles"][:3])
+    if all(a.get("lang") == "en" or re.fullmatch(r"[\x00-\x7F\s]+", a["title"] or "") for a in i["articles"][:3]):
+        return True
+    return _has_any(text, S.IPO_FOREIGN_MARKERS) and not _has_any(text, S.IPO_DOMESTIC_MARKERS)
+
+
+ENTITY_ALIASES = {"오픈ai": "openai", "앤트로픽": "anthropic", "스페이스x": "spacex", "엔비디아": "nvidia",
+                  "한투": "한국투자증권", "한국투자": "한국투자증권", "한화證": "한화투자증권"}
+
+
+def _entity_tokens(title, generic):
+    t = re.sub(r"[\[\]【】<>《》\"'“”‘’()]", " ", title)
+    for k, v in (("오픈AI", " OpenAI "), ("오픈에이아이", " OpenAI "), ("앤트로픽", " Anthropic "), ("스페이스X", " SpaceX ")):
+        t = t.replace(k, v)
+    return {ENTITY_ALIASES.get(w, w) for w in tokens(t) if len(w) >= 2 and w not in generic}
+
+
+def fold_duplicates(issues, generic):
+    """같은 회사·같은 딜을 다룬 이슈(예: 시리즈 기사 ①②③, 같은 회사 다른 각도)를 하나로 접고,
+    접힌 기사들은 위 이슈의 '다른 보도' 목록으로 옮김."""
+    toks = [_entity_tokens(i["title"], generic) for i in issues]
+    df = Counter(w for ts in toks for w in ts)
+    kept, kept_toks = [], []
+    for i, ts in zip(issues, toks):
+        rare = {w for w in ts if df[w] <= 8}
+        host = None
+        for k, kt in zip(kept, kept_toks):
+            if rare & kt:
+                host = k
+                break
+        if host is None:
+            kept.append(i)
+            kept_toks.append(ts)
+            continue
+        seen = {a["link"] for a in host["articles"]}
+        for a in i["articles"]:
+            if a["link"] not in seen and len(host["articles"]) < 12:
+                host["articles"].append(a)
+        host["outlets"] = list(dict.fromkeys(host["outlets"] + i["outlets"]))
+        host["count"] = len(host["outlets"])
+        host["reasons"][0] = f"{host['count']}개 매체 보도"
+    return kept
 
 
 def ib_adjust(issues):
@@ -582,7 +636,9 @@ def ib_adjust(issues):
             i["reasons"].append("IB 전문매체")
         if i["count"] < 2 and not any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
             i["score"] = round(i["score"] * 0.55, 3)  # 일반매체 단독 보도는 아래로
-    return issues
+    issues.sort(key=lambda x: -x["score"])
+    return fold_duplicates(issues, S.IPO_GENERIC_TOKENS | {"인수", "매각", "유상증자", "블록딜", "지분", "경영권", "m&a",
+                                                           "우선협상대상자", "자본확충", "자본조달", "사모펀드", "pef"})
 
 
 def top_keywords(issues, n=14):

@@ -89,7 +89,10 @@ FEEDS = [
     dict(id="gn_ipo_abroad", label="Google 뉴스 · 해외 상장", kind="gnews", url=gn("나스닥 상장 추진 OR 미국 상장 추진 OR 해외 상장 OR 이중상장", days=3), tab="ipo"),
     dict(id="gn_ipo_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IPO", kind="gnews",
          url=gn("IPO OR 상장 OR 프리IPO (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ipo"),
-    dict(id="gn_ipo_en", label="Google News · IPO pipeline", kind="gnews", url=gn_en("IPO pipeline OR plans IPO OR IPO valuation OR pre-IPO funding OR delays IPO", days=3), tab="ipo", lang="en"),
+    dict(id="gn_ipo_krx", label="Google 뉴스 · 거래소 상장심사", kind="gnews", url=gn("거래소 상장심사 OR 상장예비심사 미승인 OR 상장위원회 OR 심사 지연 OR 예비심사 청구 OR 상장 심사 통과", days=3), tab="ipo"),
+    dict(id="gn_ipo_fss", label="Google 뉴스 · 금감원·당국 IPO", kind="gnews", url=gn("금감원 증권신고서 정정 OR 금감원 IPO OR 뻥튀기 상장 OR 부실 상장 OR 주관사 책임 OR IPO 제도 개선", days=3), tab="ipo"),
+    dict(id="gn_ipo_dup", label="Google 뉴스 · 중복상장/물적분할", kind="gnews", url=gn("중복상장 OR 쪼개기 상장 OR 물적분할 상장 OR 자회사 상장 OR 모회사 주주 보호", days=3), tab="ipo"),
+    dict(id="gn_ipo_mkt", label="Google 뉴스 · 국내 IPO 시장", kind="gnews", url=gn("국내 IPO 시장 OR 코스닥 IPO OR 공모주 시장 OR IPO 주관 수수료 OR 하반기 IPO", days=3), tab="ipo"),
     # ── IB (유상증자·블록딜·메자닌·M&A, 최근 3일) ──
     dict(id="gn_ecm", label="Google 뉴스 · 유상증자/메자닌", kind="gnews", url=gn("유상증자 OR 전환사채 OR 교환사채 OR 신주인수권부사채", days=3), tab="ib", sub="ecm"),
     dict(id="gn_ecm2", label="Google 뉴스 · 블록딜/지분매각", kind="gnews", url=gn("블록딜 OR 시간외 대량매매 OR 지분 매각 OR 오버행", days=3), tab="ib", sub="ecm"),
@@ -218,6 +221,18 @@ IPO_PRIORITY = {
     "제도 변화": ["제도", "개편", "개선", "요건", "의무보유", "상장심사", "금융당국", "거래소"],
 }
 IB_SPECIALIST_OUTLETS = ["더벨", "딜사이트", "인베스트조선"]
+# IPO 탭 국내/해외 구분 (해외 이슈는 최대 10%)
+IPO_FOREIGN_MARKERS = ["오픈AI", "OpenAI", "앤트로픽", "Anthropic", "스페이스X", "SpaceX", "월가", "뉴욕증시", "홍콩",
+                       "중국", "일본", "인도", "필리핀", "유럽", "런던", "글로벌 IPO", "美 IPO", "미국 IPO 시장", "Arm", "엔비디아"]
+IPO_DOMESTIC_MARKERS = ["코스닥", "코스피", "유가증권", "거래소", "금감원", "금융위", "금융당국", "국내", "증권사", "주관사",
+                        "중복상장", "기술특례", "미래에셋", "한국투자", "한투", "NH투자", "KB증권", "삼성증권", "하나증권",
+                        "신한투자", "대신증권", "키움", "SK", "삼성", "LG", "현대", "한화", "두산", "롯데", "CJ", "카카오",
+                        "네이버", "쿠팡", "토스", "케이뱅크", "컬리", "무신사", "야놀자", "공모주", "더벨", "딜사이트"]
+IPO_FOREIGN_MAX = 2   # 탭 20개 중 해외 이슈 최대 개수
+# 같은 회사·같은 딜 묶을 때 무시하는 일반 단어
+IPO_GENERIC_TOKENS = set("""ipo 상장 추진 투자 유치 기업가치 코스닥 코스피 시장 증권 주관사 주관 공모 몸값 논란 연기 철회 거래소 금감원
+심사 제도 개편 해외 미국 나스닥 국내 올해 대어 조원 억원 신규 중복상장 가이드라인 프리ipo 예비심사 청구 승인 미승인 가치
+상장사 공모주 기업 회사 주주 계획 전망 이슈 분석 단독 종합 속보 하반기 상반기 4분기 3분기 증시 입성 재도전 재추진 추진하는""".split())
 
 # IB 탭: 세부 구분용 단어 (IPO 는 별도 탭)
 IB_SUB_WORDS = {
