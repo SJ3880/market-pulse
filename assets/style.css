@@ -420,3 +420,31 @@ body.qv-open { overflow: hidden; }
   .coin-h { flex-wrap: wrap; }
   .coin-h .prem { margin-left: 0; width: 100%; }
 }
+
+/* 탭 편집: 사용자 지정 색 (밝은·어두운 화면 모두 읽히는 중간 톤) */
+.tabs button[data-c], .te-name[data-c] { color: var(--tc); }
+.tabs button[data-c]:hover, .tabs button[data-c][aria-selected="true"] { color: var(--tc); background: color-mix(in srgb, var(--tc) 11%, transparent); border-radius: 8px 8px 0 0; }
+.tabs button[data-c][aria-selected="true"] { border-bottom-color: var(--tc); }
+[data-c="navy"] { --tc: #2C5C8F; } [data-c="blue"] { --tc: #2F74D0; } [data-c="violet"] { --tc: #7A5CD6; }
+[data-c="teal"] { --tc: #0E8F9A; } [data-c="green"] { --tc: #1F9D5C; } [data-c="orange"] { --tc: #D17A1E; }
+[data-c="red"] { --tc: #D2443F; } [data-c="pink"] { --tc: #C8508E; } [data-c="gray"] { --tc: #7C8798; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) [data-c="navy"] { --tc: #6FA3DA; } }
+:root[data-theme="dark"] [data-c="navy"] { --tc: #6FA3DA; }
+.tab-edit { margin-left: auto; flex: 0 0 auto; align-self: center; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px dashed var(--line); background: none; color: var(--muted); font-size: 13px; font-weight: 600;
+  padding: 5px 10px; border-radius: 99px; cursor: pointer; white-space: nowrap; }
+.tab-edit:hover { color: var(--ink); border-style: solid; }
+.tab-edit svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.te-list { list-style: none; margin: 14px 0; padding: 0; display: grid; }
+.te-list li { padding: 10px 2px; border-top: 1px solid var(--line); }
+.te-list li:first-child { border-top: 0; }
+.te-top { display: flex; align-items: center; gap: 8px; }
+.te-name { font-size: 15px; }
+.te-mv { margin-left: auto; display: flex; gap: 4px; }
+.te-mv .icon-btn { width: 32px; height: 32px; font-size: 12px; }
+.te-mv .icon-btn:disabled { opacity: .3; cursor: default; }
+.te-colors { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.sw { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--panel); background: var(--tc, var(--muted));
+  box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
+.sw:not([data-c]) { background: linear-gradient(135deg, var(--ink-2) 50%, var(--util) 50%); }
+.sw[aria-checked="true"] { box-shadow: 0 0 0 2px var(--ink); }

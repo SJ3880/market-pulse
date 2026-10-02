@@ -1,5 +1,5 @@
 // 마켓 펄스 서비스워커: 화면 파일만 저장해 두고(오프라인에서도 열림), 뉴스·시세 데이터는 항상 새로 받음
-const CACHE = "mp-shell-v9";
+const CACHE = "mp-shell-v10";
 const SHELL = ["./", "index.html", "assets/style.css", "assets/app.js", "manifest.webmanifest", "icons/icon-192.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => {

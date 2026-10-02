@@ -178,7 +178,7 @@
   }
 
   function renderTabs() {
-    document.querySelectorAll("#tabs button").forEach((b) => {
+    document.querySelectorAll("#tabs button[data-tab]").forEach((b) => {
       const t = b.dataset.tab;
       b.setAttribute("aria-selected", t === S.tab ? "true" : "false");
       b.tabIndex = t === S.tab ? 0 : -1;
@@ -835,6 +835,76 @@
   }
   $("#feedbackBtn").addEventListener("click", openFeedback);
 
+  // ───────── 탭 편집 (순서·색깔, 이 기기에만 저장) ─────────
+  const TAB_COLORS = { "": "기본", navy: "남색", blue: "파랑", violet: "보라", teal: "청록", green: "초록", orange: "주황", red: "빨강", pink: "분홍", gray: "회색" };
+  const DEFAULT_ORDER = Object.keys(TABS);
+  const tabPref = (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("mp-tabs") || "{}");
+      return { order: Array.isArray(v.order) ? v.order : [], colors: v.colors && typeof v.colors === "object" ? v.colors : {} };
+    } catch (e) { return { order: [], colors: {} }; }
+  })();
+  const saveTabPref = () => { try { localStorage.setItem("mp-tabs", JSON.stringify(tabPref)); } catch (e) { /* 저장 불가 환경 */ } };
+  function tabOrder() {
+    const o = tabPref.order.filter((t) => TABS[t]);
+    return o.concat(DEFAULT_ORDER.filter((t) => !o.includes(t)));   // 새로 생긴 탭은 뒤에
+  }
+  function applyTabPrefs() {
+    const bar = $("#tabs"), sep = bar.querySelector(".tab-sep"), edit = $("#tabEditBtn");
+    const custom = tabPref.order.length > 0;
+    tabOrder().forEach((t) => {
+      const b = bar.querySelector(`button[data-tab="${t}"]`);
+      if (!b) return;
+      bar.insertBefore(b, edit);
+      if (!custom && t === "crypto" && sep) bar.insertBefore(sep, edit);   // 기본 순서일 때만 구분선 유지
+      const c = tabPref.colors[t];
+      if (c && TAB_COLORS[c]) b.dataset.c = c; else delete b.dataset.c;
+    });
+    if (sep) sep.hidden = custom;
+  }
+  function tabEditHTML() {
+    const order = tabOrder();
+    return `<h2 id="qvTitle">탭 편집</h2>
+      <p class="hint">▲▼로 순서를, 동그라미로 색깔을 바꿔요. 바로 적용되고 이 기기(브라우저)에만 저장돼요.</p>
+      <ol class="te-list">${order.map((t, i) => `<li>
+        <div class="te-top"><b class="te-name"${tabPref.colors[t] ? ` data-c="${tabPref.colors[t]}"` : ""}>${esc(TABS[t])}</b>
+          <span class="te-mv">
+            <button type="button" class="icon-btn" data-te-up="${t}" aria-label="${esc(TABS[t])} 위로" ${i === 0 ? "disabled" : ""}>▲</button>
+            <button type="button" class="icon-btn" data-te-down="${t}" aria-label="${esc(TABS[t])} 아래로" ${i === order.length - 1 ? "disabled" : ""}>▼</button>
+          </span></div>
+        <div class="te-colors" role="radiogroup" aria-label="${esc(TABS[t])} 색깔">${Object.entries(TAB_COLORS).map(([k, nm]) =>
+          `<button type="button" class="sw" role="radio" ${k ? `data-c="${k}"` : ""} data-te-color="${t}" data-v="${k}" aria-checked="${(tabPref.colors[t] || "") === k}" title="${nm}" aria-label="${nm}"></button>`).join("")}</div>
+      </li>`).join("")}</ol>
+      <div class="fb-row"><button type="button" class="chip" data-te-reset>처음 상태로 되돌리기</button><button type="button" class="fb-send" data-close>완료</button></div>`;
+  }
+  function openTabEdit() {
+    $("#qvBody").innerHTML = tabEditHTML();
+    const qv = $("#qv");
+    S.qvOpener = $("#tabEditBtn");
+    qv.hidden = false; qv.classList.add("fb");
+    document.body.classList.add("qv-open");
+    requestAnimationFrame(() => qv.classList.add("on"));
+  }
+  $("#qvBody").addEventListener("click", (e) => {
+    const up = e.target.closest("[data-te-up]"), down = e.target.closest("[data-te-down]");
+    const col = e.target.closest("[data-te-color]"), reset = e.target.closest("[data-te-reset]");
+    if (!up && !down && !col && !reset) return;
+    if (up || down) {
+      const o = tabOrder(), t = (up || down).dataset[up ? "teUp" : "teDown"], i = o.indexOf(t), j = i + (up ? -1 : 1);
+      if (j < 0 || j >= o.length) return;
+      [o[i], o[j]] = [o[j], o[i]];
+      tabPref.order = o;
+    } else if (col) {
+      if (col.dataset.v) tabPref.colors[col.dataset.teColor] = col.dataset.v; else delete tabPref.colors[col.dataset.teColor];
+    } else { tabPref.order = []; tabPref.colors = {}; }
+    saveTabPref(); applyTabPrefs(); renderTabs();
+    const key = up ? `[data-te-up="${up.dataset.teUp}"]` : down ? `[data-te-down="${down.dataset.teDown}"]` : null;
+    $("#qvBody").innerHTML = tabEditHTML();
+    if (key) ($(key) && !$(key).disabled ? $(key) : $("#qvBody .te-list"))?.focus?.();
+  });
+  $("#tabEditBtn").addEventListener("click", openTabEdit);
+  applyTabPrefs();
+
   // ───────── 이벤트 ─────────
   // 휴대폰처럼 탭 줄이 가로로 넘칠 때 고른 탭이 보이도록 (탭 줄만 옆으로 스크롤)
   function showTab() {
@@ -854,7 +924,7 @@
   $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-tab]"); if (b) setTab(b.dataset.tab, true); });
   $("#tabs").addEventListener("keydown", (e) => {
     if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
-    const keys = Object.keys(TABS), i = keys.indexOf(S.tab);
+    const keys = tabOrder(), i = keys.indexOf(S.tab);
     const n = keys[(i + (e.key === "ArrowRight" ? 1 : keys.length - 1)) % keys.length];
     setTab(n); $(`#tabs button[data-tab="${n}"]`).focus();
   });
