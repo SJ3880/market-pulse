@@ -22,7 +22,7 @@
   const POLL_SEC = 60;
   const POLL_SECS = [10, 40]; // 수집기는 0초·30초에 시작(장중) → 10초·40초에 확인
 
-  const TABS = { briefing: "브리핑", economy: "경제", stocks: "주식시장", realestate: "부동산", ipo: "IPO", ib: "IB", funding: "비상장 투자", policy: "정책·발표", timeline: "하루 흐름", calendar: "일정" };
+  const TABS = { briefing: "브리핑", economy: "경제", stocks: "주식시장", realestate: "부동산", ipo: "IPO", ib: "IB", funding: "비상장 투자", crypto: "크립토", policy: "정책·발표", timeline: "하루 흐름", calendar: "일정" };
   const SUBS = { all: "전체", kr: "국내", global: "해외" };
   const IB_SUBS = { all: "전체", ecm: "유증·블록딜·메자닌", mna: "M&A" };
   const SIDE_MARKETS = {
@@ -32,7 +32,9 @@
     ipo: ["^KQ11", "^KS11", "^IXIC", "^VIX"],
     ib: ["^KS11", "^KQ11", "^VIX", "KRW=X"],
     funding: ["^KQ11", "^IXIC", "^KS11", "^VIX"],
+    crypto: ["BTC-USD", "^IXIC", "KRW=X", "DX-Y.NYB", "GC=F", "^VIX"],
   };
+  const NEWS_TABS = ["economy", "stocks", "realestate", "ipo", "ib", "funding", "crypto"];
 
   const S = {
     snap: null, tab: "briefing", sub: "all", ibSub: "all", org: "all", open: new Set(),
@@ -99,7 +101,7 @@
     S.snap = snap; S.error = null; S.lastOk = Date.now();
     // 수집기가 직전 스냅샷과 비교해 표시한 '새 진입' 이슈 (첫 로딩 때는 강조하지 않음)
     S.fresh = firstLoad ? new Set() : new Set(
-      ["economy", "stocks", "realestate", "ipo", "ib", "funding"].flatMap((t) => (snap.tabs[t]?.issues || []).slice(0, 10)).filter((i) => i.is_new).map((i) => i.link));
+      NEWS_TABS.flatMap((t) => (snap.tabs[t]?.issues || []).slice(0, 10)).filter((i) => i.is_new).map((i) => i.link));
     S.flashOnce = true;
     if (S.tab === "timeline" && S.tl.dates && S.tl.sel === S.tl.dates[0]) loadTimeline();
     renderAll();
@@ -291,9 +293,10 @@
     economy: "금리·환율·물가·수출 등 거시경제 이슈",
     stocks: "국내외 증시, 수급, IPO·공모주",
     realestate: "집값·전월세·대출규제·공급",
-    ipo: "더벨·딜사이트 우선 · 프리IPO·주관사·상장 추진/연기/철회·몸값·심사·제도·리그테이블 (수요예측·청약 등 일정 기사 제외)",
-    ib: "더벨·딜사이트 우선 · 대형 유상증자·블록딜·메자닌(CB·EB·BW)·M&A·리그테이블",
-    funding: "더벨·딜사이트·바이오스펙테이터 우선 · 비상장사 시드~시리즈 투자유치, 대규모 펀딩, 기업가치",
+    ipo: "딜사이트·인베스트조선·시그널·마켓in·팍스넷 우선 · 프리IPO·주관사·상장 추진/연기/철회·몸값·심사·제도·리그테이블 (수요예측·청약 등 일정 기사·유료 기사 제외)",
+    ib: "딜사이트·인베스트조선·시그널 우선 · 대형 유상증자·블록딜·메자닌(CB·EB·BW)·M&A·리그테이블",
+    funding: "딜사이트·바이오스펙테이터 우선 · 비상장사 시드~시리즈 투자유치, 대규모 펀딩, 기업가치",
+    crypto: "비트코인 중심 · 시세 흐름, 현물 ETF·기관 자금, 거래소·스테이블코인 제도, 김치 프리미엄",
   };
 
   function renderMain() {
@@ -322,8 +325,8 @@
     }
     const list = issues.length ? issues.map((iss, i) => issueHTML(iss, i)).join("")
       : `<li class="empty">지금은 이 구분에 해당하는 이슈가 없어요. 다른 구분을 눌러 보세요.</li>`;
-    const evCats = { economy: ["금리", "경제"], stocks: ["금리", "주식"], realestate: ["금리", "부동산"], ipo: ["금리", "주식"], ib: ["금리", "주식"], funding: ["금리", "주식"] }[t];
-    const top = t === "stocks" ? marketPanelHTML() : t === "realestate" ? realestateIndicatorsHTML() : "";
+    const evCats = { economy: ["금리", "경제"], stocks: ["금리", "주식"], realestate: ["금리", "부동산"], ipo: ["금리", "주식"], ib: ["금리", "주식"], funding: ["금리", "주식"], crypto: ["금리", "주식"] }[t];
+    const top = t === "stocks" ? marketPanelHTML() : t === "realestate" ? realestateIndicatorsHTML() : t === "crypto" ? cryptoPanelHTML() : "";
     return `${top}<div class="grid">
       <section class="panel" aria-label="${TABS[t]} 이슈">
         <div class="list-head"><div><h1>${TABS[t]} 핵심 이슈</h1><p>${TAB_INTRO[t]} · 기사 ${data.total_articles ?? 0}건을 ${data.issues.length}개 이슈로 묶음</p></div>${chips}</div>
@@ -339,7 +342,7 @@
   }
 
   function briefingHTML() {
-    const tabs = ["economy", "stocks", "realestate", "ipo", "ib", "funding"];
+    const tabs = NEWS_TABS;
     const line = ["^KS11", "^KQ11", "KRW=X", "^GSPC", "^IXIC", "^TNX"].map(quote).filter((m) => m && m.price != null)
       .map((m) => `<span><strong>${esc(m.name)}</strong><span class="num">${fmt(m.price, m.digits)}</span> <span class="num ${dir(m.change)}">${pct(m.pct)}</span></span>`).join("")
       + (XT().flow?.markets?.KOSPI ? `<span><strong>외국인(코스피)</strong><span class="num ${dir(XT().flow.markets.KOSPI.foreign)}">${eok(XT().flow.markets.KOSPI.foreign)}</span></span>` : "");
@@ -361,7 +364,7 @@
       <div class="brief-top">${picks}</div>
       <div class="grid">
         <section class="panel" aria-label="전체 이슈 순위">
-          <div class="list-head"><div><h1>지금 가장 뜨거운 이슈</h1><p>경제·주식·부동산·IPO·IB·비상장 투자 전체를 같은 기준으로 줄 세운 상위 10개</p></div></div>
+          <div class="list-head"><div><h1>지금 가장 뜨거운 이슈</h1><p>경제·주식·부동산·IPO·IB·비상장 투자·크립토 전체를 같은 기준으로 줄 세운 상위 10개</p></div></div>
           <ol class="issues">${all.map((iss, i) => issueHTML(iss, i, { tabLabel: TABS[iss._tab] })).join("")}</ol>
         </section>
         <aside class="side">
@@ -415,7 +418,7 @@
         <table>${s.sources.map((x) => `<tr><td class="${x.ok ? "ok" : "bad"}">${x.ok ? "정상" : "실패"}</td><td>${esc(x.label)}</td><td class="num">${x.count}건</td><td>${esc(x.error || "")}</td></tr>`).join("")}</table>
       </details>
       <details><summary>추가 지표·알림 상태</summary>
-        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)" }).map(([k, nm]) => {
+        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)", crypto: "코인 시세 (업비트·Yahoo·공포탐욕지수)" }).map(([k, nm]) => {
           const v = (s.extras || {})[k] || {};
           const st = v.ok ? "정상" : v.missing_key ? "키 없음" : v.stale ? "지연" : "실패";
           return `<tr><td class="${v.ok ? "ok" : "bad"}">${st}</td><td>${nm}</td><td>${v.fetched_at ? ago(v.fetched_at) : ""}</td><td>${esc(v.error || "")}</td></tr>`;
@@ -506,6 +509,44 @@
       <div class="mp-col"><h2 class="sec">투자자별 순매수 <small>억원</small></h2>${flowHTML()}</div>
       <div class="mp-col"><h2 class="sec">업종 등락 <small>업종 대표 ETF 기준</small></h2>${sectorsHTML()}</div>
       <div class="mp-col"><h2 class="sec">대형주 <small>전일 대비</small></h2>${bigcapsHTML()}</div>
+    </section>`;
+  }
+
+  // ───────── 크립토 시세판 ─────────
+  const usdFmt = (v, d = 0) => v == null ? "–" : "$" + fmt(v, d);
+  const bigUsd = (v) => v == null ? "–" : v >= 1e12 ? "$" + fmt(v / 1e12, 2) + "조" : "$" + fmt(v / 1e9, 0) + "억";
+  function cryptoPanelHTML() {
+    const c = XT().crypto;
+    if (!c?.coins) return `<section class="panel cp"><p class="hint" style="margin:0">${c?.error ? "코인 시세를 받지 못했어요: " + esc(c.error) : "코인 시세를 받는 중이에요."}</p></section>`;
+    const cards = c.coins.map((k) => {
+      const prem = k.premium == null ? "" : `<span class="prem ${k.premium >= 0 ? "up" : "down"}" title="업비트 원화 시세가 해외 달러 시세(환율 적용)보다 얼마나 비싼지">김프 ${k.premium > 0 ? "+" : ""}${fmt(k.premium, 2)}%</span>`;
+      return `<div class="coin">
+        <div class="coin-h"><b>${esc(k.name)}</b><span class="hint">${esc(k.code)}</span>${prem}</div>
+        <div class="coin-p num">${k.krw != null ? fmt(k.krw, k.krw >= 1000 ? 0 : 2) + "원" : "–"} <span class="${dir(k.krw_pct)}">${pct(k.krw_pct)}</span></div>
+        <div class="coin-s num hint">${usdFmt(k.usd, k.digits)} <span class="${dir(k.usd_pct)}">${pct(k.usd_pct)}</span>${k.krw_vol ? `<span class="vol"> · 24시간 거래대금 ${fmt(k.krw_vol / 1e8, 0)}억원</span>` : ""}</div>
+        ${spark(k.spark, k.spark?.[0], 160, 34)}
+      </div>`;
+    }).join("");
+    const f = c.fng, g = c.global;
+    const fngColor = (v) => v <= 25 ? "var(--down)" : v < 45 ? "color-mix(in srgb, var(--down) 55%, var(--muted))" : v <= 55 ? "var(--muted)" : v < 75 ? "color-mix(in srgb, var(--up) 55%, var(--muted))" : "var(--up)";
+    const fng = f ? `<div class="fng">
+        <div class="fng-v num" style="color:${fngColor(f.value)}">${f.value}</div>
+        <div><b>${esc(f.label)}</b><div class="fng-bar"><i style="left:${f.value}%"></i></div>
+          <div class="hint fng-sc"><span>극단적 공포</span><span>중립</span><span>극단적 탐욕</span></div></div>
+      </div>${f.history?.length > 2 ? spark(f.history, 50, 200, 30) : ""}<p class="hint" style="margin:4px 0 0">최근 30일 흐름 · 점선 = 50(중립)</p>` : `<p class="hint">공포·탐욕 지수를 받는 중이에요.</p>`;
+    const glob = g ? `<div class="mini">
+        <div class="row"><span>전체 코인 시가총액</span><span class="v num">${bigUsd(g.mcap_usd)}</span><span class="c num ${dir(g.mcap_pct)}">${pct(g.mcap_pct)}</span></div>
+        <div class="row"><span>비트코인 점유율</span><span class="v num">${fmt(g.btc_dom, 1)}%</span><span></span></div>
+        <div class="row"><span>이더리움 점유율</span><span class="v num">${fmt(g.eth_dom, 1)}%</span><span></span></div>
+        ${c.usdkrw ? `<div class="row"><span>적용 환율</span><span class="v num">${fmt(c.usdkrw, 2)}원</span><span></span></div>` : ""}
+      </div>` : `<p class="hint">전체 시장 규모를 받는 중이에요.</p>`;
+    return `<section class="panel cp" aria-label="크립토 시세">
+      <div class="cp-coins">${cards}</div>
+      <div class="cp-side">
+        <div><h2 class="sec">공포·탐욕 지수 <small>alternative.me</small></h2>${fng}</div>
+        <div><h2 class="sec">시장 규모 <small>CoinGecko</small></h2>${glob}</div>
+      </div>
+      <p class="hint cp-note">원화 시세 ${esc(c.src || "")} · 24시간 기준 등락 · 김프 = 국내 원화 시세 ÷ (해외 달러 시세 × 환율) − 1${c.warn ? " · " + esc(c.warn) : ""}</p>
     </section>`;
   }
 
@@ -675,7 +716,7 @@
     if (!day && S.tl.err) return `<section class="panel"><div class="list-head"><div class="chips">${chips}</div></div><div class="empty">이 날짜 기록을 불러오지 못했어요. 잠시 뒤 다시 눌러 보세요.</div></section>`;
     if (!day) { loadTimeline(S.tl.sel); return `<section class="panel"><div class="list-head"><div class="chips">${chips}</div></div><div class="empty">불러오는 중이에요.</div></section>`; }
     const slots = day.slots || [];
-    const cols = ["economy", "stocks", "realestate", "ipo", "ib", "funding"].map((t) => {
+    const cols = NEWS_TABS.map((t) => {
       const segs = segmentsOf(slots, t);
       return `<div class="tl-col"><h2 class="sec">${TABS[t]} 1위 변화 <small>${segs.length}번 바뀜</small></h2>
         ${segs.length ? `<ol class="tl">${segs.map((g) => `<li><span class="tm num">${g.start}${g.end !== g.start ? "–" + g.end : ""}<small>${dur(g.start, g.end)}</small></span>
@@ -696,7 +737,7 @@
   function findIssue(o) {
     // 타임라인 등 일부 정보만 있는 항목은 현재 이슈 목록에서 같은 기사/비슷한 제목을 찾아 보강
     if (o.articles) return o;
-    const all = ["economy", "stocks", "realestate", "ipo", "ib", "funding"].flatMap((t) => (S.snap?.tabs[t]?.issues || []).map((i) => ({ ...i, _tabLabel: TABS[t] })));
+    const all = NEWS_TABS.flatMap((t) => (S.snap?.tabs[t]?.issues || []).map((i) => ({ ...i, _tabLabel: TABS[t] })));
     const b = bgr(o.title);
     return all.find((i) => i.link === o.link || i.articles.some((a) => a.link === o.link))
       || all.find((i) => jac(bgr(i.title), b) >= 0.5) || o;
@@ -795,11 +836,18 @@
   $("#feedbackBtn").addEventListener("click", openFeedback);
 
   // ───────── 이벤트 ─────────
+  // 휴대폰처럼 탭 줄이 가로로 넘칠 때 고른 탭이 보이도록 (탭 줄만 옆으로 스크롤)
+  function showTab() {
+    const b = $(`#tabs button[data-tab="${S.tab}"]`), bar = $("#tabs");
+    if (!b || bar.scrollWidth <= bar.clientWidth) return;
+    bar.scrollTo({ left: b.offsetLeft - (bar.clientWidth - b.offsetWidth) / 2, behavior: "smooth" });
+  }
+
   function setTab(t, focus = false) {
     if (!TABS[t]) t = "briefing";
     S.tab = t;
     if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
-    renderTabs(); renderMain();
+    renderTabs(); renderMain(); showTab();
     if (focus) window.scrollTo({ top: 0 });
   }
 
@@ -844,6 +892,6 @@
 
   // ───────── 시작 ─────────
   S.tab = TABS[location.hash.slice(1)] ? location.hash.slice(1) : "briefing";
-  renderTabs();
+  renderTabs(); showTab();
   poll(true).finally(schedule);
 })();

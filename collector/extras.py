@@ -458,6 +458,82 @@ def fetch_realtime_index(http_get):
     return out
 
 
+# ─────────────────────────── 크립토 (업비트 원화 시세 + 해외 달러 시세 + 공포탐욕) ───────────────────────────
+CRYPTO_COINS = [("BTC", "비트코인", "BTC-USD", 0), ("ETH", "이더리움", "ETH-USD", 0),
+                ("XRP", "리플", "XRP-USD", 4), ("SOL", "솔라나", "SOL-USD", 2)]
+FNG_KO = {"Extreme Fear": "극단적 공포", "Fear": "공포", "Neutral": "중립", "Greed": "탐욕", "Extreme Greed": "극단적 탐욕"}
+
+
+def _crypto_slow(http_get):
+    """공포·탐욕 지수, 전체 시총·비트코인 점유율 (자주 안 바뀜 → 10분마다)."""
+    def run():
+        out = {}
+        try:
+            fg = json.loads(http_get("https://api.alternative.me/fng/?limit=30", timeout=8, fixture_key="fng"))["data"]
+            out["fng"] = dict(value=int(fg[0]["value"]), label=FNG_KO.get(fg[0]["value_classification"], fg[0]["value_classification"]),
+                              history=[int(x["value"]) for x in fg][::-1])
+        except Exception as ex:  # noqa: BLE001
+            out["fng_error"] = f"{type(ex).__name__}"
+        try:
+            g = json.loads(http_get("https://api.coingecko.com/api/v3/global", timeout=8, fixture_key="cg_global"))["data"]
+            out["global"] = dict(mcap_usd=g["total_market_cap"]["usd"], mcap_pct=round(g["market_cap_change_percentage_24h_usd"], 2),
+                                 btc_dom=round(g["market_cap_percentage"]["btc"], 1), eth_dom=round(g["market_cap_percentage"]["eth"], 1))
+        except Exception as ex:  # noqa: BLE001
+            out["global_error"] = f"{type(ex).__name__}"
+        if not out.get("fng") and not out.get("global"):
+            raise RuntimeError("공포탐욕·시총 모두 실패")
+        return out
+    return _cached("crypto_slow", 600, run)
+
+
+def fetch_crypto(http_get, fetch_quote):
+    def run():
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            qs = list(ex.map(lambda c: fetch_quote(("crypto", c[2], c[1], c[3], "$")), CRYPTO_COINS))
+            fx_f = ex.submit(fetch_quote, ("fx", "KRW=X", "원/달러", 2, "원"))
+        fx = fx_f.result().get("price")
+        up, up_err = {}, None
+        try:
+            raw = http_get("https://api.upbit.com/v1/ticker?markets=" + ",".join("KRW-" + c[0] for c in CRYPTO_COINS),
+                           timeout=6, fixture_key="upbit")
+            for t in json.loads(raw):
+                up[t["market"].split("-")[1]] = t
+        except Exception as ex:  # noqa: BLE001
+            up_err = f"업비트: {type(ex).__name__}"
+            try:  # 빗썸으로 대신
+                d = json.loads(http_get("https://api.bithumb.com/public/ticker/ALL_KRW", timeout=6, fixture_key="bithumb"))["data"]
+                for c in CRYPTO_COINS:
+                    t = d.get(c[0])
+                    if t:
+                        up[c[0]] = dict(trade_price=float(t["closing_price"]),
+                                        signed_change_rate=float(t["fluctate_rate_24H"]) / 100,
+                                        acc_trade_price_24h=float(t["acc_trade_value_24H"]))
+                up_err += " → 빗썸 시세 사용"
+            except Exception:  # noqa: BLE001
+                pass
+        coins = []
+        for (code, name, _, digits), q in zip(CRYPTO_COINS, qs):
+            u = up.get(code, {})
+            usd, krw = q.get("price"), u.get("trade_price")
+            prem = round((krw / (usd * fx) - 1) * 100, 2) if usd and krw and fx else None
+            coins.append(dict(code=code, name=name, digits=digits, usd=usd, usd_pct=q.get("pct"),
+                              spark=(q.get("spark") or [])[-60:], krw=krw,
+                              krw_pct=round(u["signed_change_rate"] * 100, 2) if u.get("signed_change_rate") is not None else None,
+                              krw_vol=u.get("acc_trade_price_24h"), premium=prem))
+        if not any(c["usd"] or c["krw"] for c in coins):
+            raise RuntimeError("코인 시세 없음")
+        out = dict(coins=coins, usdkrw=fx, src=("빗썸" if up_err and up else "업비트") + "(원화)·Yahoo(달러)")
+        if up_err:
+            out["warn"] = up_err
+        slow = _crypto_slow(http_get)
+        for k in ("fng", "global"):
+            if slow.get(k):
+                out[k] = slow[k]
+        return out
+
+    return _cached("crypto", 30, run)
+
+
 def collect_extras(http_get, fetch_quote):
     keys = {"ecos": os.environ.get("ECOS_KEY", "").strip(), "reb": os.environ.get("REB_KEY", "").strip()}
     jobs = {
@@ -467,7 +543,8 @@ def collect_extras(http_get, fetch_quote):
         "sectors": lambda: fetch_sectors(fetch_quote),
         "bigcaps": lambda: fetch_bigcaps(fetch_quote),
         "realtime": lambda: {"ok": True, "quotes": fetch_realtime_index(http_get)},
+        "crypto": lambda: fetch_crypto(http_get, fetch_quote),
     }
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=7) as ex:
         futs = {k: ex.submit(f) for k, f in jobs.items()}
         return {k: f.result() for k, f in futs.items()}

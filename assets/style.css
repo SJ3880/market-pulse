@@ -96,6 +96,15 @@ button { font: inherit; color: inherit; }
   cursor: pointer; white-space: nowrap; border-bottom: 3px solid transparent; }
 .tabs button:hover { color: var(--ink); }
 .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--brand); }
+/* 브리핑·정책·하루 흐름·일정 = 보조 탭(보라), 경제~크립토 = 분야 탭(남색) */
+:root { --util: #6B4FBB; --util-bg: #F1ECFC; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --util: #B9A4F5; --util-bg: #231C38; } }
+:root[data-theme="dark"] { --util: #B9A4F5; --util-bg: #231C38; }
+.tabs button.util { color: var(--util); }
+.tabs button.util { border-radius: 8px 8px 0 0; }
+.tabs button.util:hover { color: var(--util); background: var(--util-bg); }
+.tabs button.util[aria-selected="true"] { color: var(--util); background: var(--util-bg); border-bottom-color: var(--util); }
+.tabs .tab-sep { flex: 0 0 1px; align-self: center; height: 18px; margin: 0 6px; background: var(--line); }
 .tabs .cnt { font-size: 11px; font-weight: 700; margin-left: 4px; padding: 1px 6px; border-radius: 99px; background: var(--up-bg); color: var(--up); vertical-align: 2px; }
 
 /* ───────── 본문 ───────── */
@@ -381,4 +390,33 @@ body.qv-open { overflow: hidden; }
   .status { min-width: 0; flex: 1; justify-content: flex-end; }
   .status #statusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .top-actions { flex: none; }
+}
+
+/* 크립토 시세판 */
+.cp { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; padding: 16px 18px; margin-bottom: 14px; }
+.cp-coins { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.coin { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); min-width: 0; }
+.coin-h { display: flex; align-items: baseline; gap: 6px; }
+.coin-h .prem { margin-left: auto; font-size: 12px; font-weight: 700; }
+.coin-p { font-size: 19px; font-weight: 700; margin-top: 4px; }
+.coin-p span { font-size: 13px; }
+.coin-s { font-size: 12.5px; margin: 2px 0 6px; }
+.coin svg { width: 100%; height: 34px; display: block; }
+.cp-side { display: grid; gap: 14px; align-content: start; }
+.cp-side svg { width: 100%; height: 30px; display: block; margin-top: 6px; }
+.fng { display: flex; gap: 12px; align-items: center; }
+.fng-v { font-size: 34px; font-weight: 800; line-height: 1; min-width: 52px; text-align: center; }
+.fng > div:last-child { flex: 1; }
+.fng-bar { position: relative; height: 8px; border-radius: 99px; margin: 6px 0 3px;
+  background: linear-gradient(90deg, var(--down), var(--line) 50%, var(--up)); }
+.fng-bar i { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--ink); }
+.fng-sc { display: flex; justify-content: space-between; font-size: 11px; }
+.cp-note { grid-column: 1 / -1; margin: 0; font-size: 12px; }
+@media (max-width: 760px) {
+  .cp { grid-template-columns: 1fr; padding: 12px; }
+  .cp-coins { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .coin-p { font-size: 16px; }
+  .coin .vol { display: none; }
+  .coin-h { flex-wrap: wrap; }
+  .coin-h .prem { margin-left: 0; width: 100%; }
 }

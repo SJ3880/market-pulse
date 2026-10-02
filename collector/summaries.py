@@ -24,12 +24,22 @@ BYLINE_RE = re.compile(
     r"^\s*(\([^)]{0,30}=[^)]{0,30}\)\s*[^=\n]{0,30}?(기자|특파원|에디터)?\s*=\s*"
     r"|\[[^\]]{0,30}(기자|특파원)\]\s*"
     r"|[가-힣A-Za-z]{2,10}\s+[가-힣]{2,4}\s*(기자|특파원)\s*[=:]?\s*)")
+# 유료벽·로그인·점검 안내 같은 '본문 아님' 문구 → 요약으로 쓰지 않음
+PAYWALL_RE = re.compile(r"(유료\s*회원|유료회원\s*전용|회원\s*전용|로그인\s*(해\s*주세요|후\s*(이용|확인))|결제\s*후\s*확인|"
+                        r"구독자\s*전용|프리미엄\s*기사|서버\s*점검|subscribe to (read|continue)|subscribers only|paywall)", re.I)
 JUNK_RE = re.compile(r"(무단\s*전재|재배포\s*금지|Copyright|ⓒ|©|저작권자|기사제보|구독\s*신청|[\w.]+@[\w.]+\.\w+)", re.I)
 
 
 def _plain(s):
     s = html.unescape(TAG_RE.sub(" ", html.unescape(s or "")))
+    s = re.sub(r"<[^>]*$", " ", s)  # 잘린 태그(예: '<img src=')
     return WS_RE.sub(" ", s).strip()
+
+
+def usable(text):
+    """요약으로 쓸 만한 글인지 (유료 안내·태그 찌꺼기·너무 짧은 글 제외)."""
+    t = (text or "").strip()
+    return len(re.sub(r"[^가-힣A-Za-z]", "", t)) >= 30 and not PAYWALL_RE.search(t)
 
 
 def clean_summary(text):
@@ -87,7 +97,7 @@ def extract_lede(raw):
     # 1) <p> 문단  2) <br> 로 나뉜 본문(일부 국내 매체)
     for p in re.findall(r"<p[^>]*>(.*?)</p>", body, re.S | re.I):
         s = _plain(p)
-        if len(s) >= 40 and not JUNK_RE.search(s):
+        if len(s) >= 40 and not JUNK_RE.search(s) and not PAYWALL_RE.search(s):
             paras.append(s)
         if sum(map(len, paras)) > MAX_CHARS * 1.3:
             break
@@ -100,12 +110,13 @@ def extract_lede(raw):
     text = " ".join(paras)
     if len(text) < max(120, len(og)):
         text = og
-    return to_paragraphs(text)
+    out = to_paragraphs(text)
+    return out if usable(out) else ""
 
 
 def best_rss_summary(members, outlet_weight):
     """클러스터 기사들의 RSS 요약 중 가장 쓸 만한 것 (권위 → 길이)."""
-    cands = [m for m in members if len(clean_summary(m.get("summary", ""))) >= 40]
+    cands = [m for m in members if len(clean_summary(m.get("summary", ""))) >= 40 and usable(clean_summary(m["summary"]))]
     if not cands:
         return "", None
     m = max(cands, key=lambda m: (outlet_weight(m["outlet"]) >= 0.95, len(m["summary"][:400]), outlet_weight(m["outlet"])))
@@ -176,13 +187,17 @@ def enrich(tabs, http_get, cache, policy=None, log=print, outlet_weight=lambda o
     """요약이 부족한 이슈를 원문 앞부분으로 보강 (모든 탭·정책 발표).
     cache: {원문링크: [시각, 요약], 'url:'+구글링크: [시각, 원문주소]}"""
     targets = []
-    for tab in ("ipo", "ib", "funding", "economy", "stocks", "realestate"):
+    for tab in ("ipo", "ib", "funding", "crypto", "economy", "stocks", "realestate"):
         targets += [("issue", iss) for iss in tabs.get(tab, {}).get("issues", [])[:ENRICH_TOP]]
     targets += [("policy", p) for p in (policy or [])[:20]]
 
     todo, decodes = [], 0
     for kind, iss in targets:
         have = iss.get("summary", "") if kind == "issue" else iss.get("lede", "")
+        if not usable(have):  # 유료 안내문 등은 지우고 다시 찾기
+            have = ""
+            if kind == "issue":
+                iss["summary"], iss["summary_src"] = "", None
         if len(have) >= 150:
             continue
         arts = iss.get("articles") or [{"title": iss["title"], "link": iss["link"], "outlet": iss.get("media") or iss["outlet"]}]
@@ -199,7 +214,7 @@ def enrich(tabs, http_get, cache, policy=None, log=print, outlet_weight=lambda o
                 continue
             hit = cache.get(url)
             if hit is not None:
-                if hit[1]:
+                if hit[1] and usable(hit[1]):
                     _apply(kind, iss, hit[1], a, url)
                     picked = "done"
                     break
@@ -230,6 +245,8 @@ def enrich(tabs, http_get, cache, policy=None, log=print, outlet_weight=lambda o
 
 
 def _apply(kind, iss, text, a, url):
+    if not usable(text):
+        return
     src = {"outlet": a["outlet"], "link": url, "title": a["title"]}
     if kind == "issue":
         if len(text) > len(iss.get("summary", "")):

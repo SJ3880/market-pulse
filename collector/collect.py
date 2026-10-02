@@ -42,8 +42,8 @@ KST = dt.timezone(dt.timedelta(hours=9))
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 MAX_AGE_H = 72           # 수집 단계에서 이보다 오래된 기사는 버림
-TAB_MAX_AGE_H = {"ipo": 72, "ib": 72, "funding": 72}   # 그 외 탭은 36시간 (리그테이블 등 피드별 예외 허용)
-TAB_LIMIT = {"ipo": 20, "ib": 20, "funding": 20}       # 탭별 최대 이슈 수 (그 외 TOP_N)
+TAB_MAX_AGE_H = {"ipo": 72, "ib": 72, "funding": 72, "crypto": 30}   # 그 외 탭은 36시간 (리그테이블 등 피드별 예외 허용)
+TAB_LIMIT = {"ipo": 20, "ib": 20, "funding": 20, "crypto": 20}       # 탭별 최대 이슈 수 (그 외 TOP_N)
 TAB_HALF_LIFE = {"ipo": 14, "ib": 14, "funding": 16}   # 최신성 감소 속도(시간) — 딜 탭은 천천히
 TOP_N = 30               # 탭별 이슈 개수
 FIXTURE_DIR = os.environ.get("FIXTURE_DIR")  # 테스트용: 실제 인터넷 대신 파일에서 읽기
@@ -266,8 +266,10 @@ def items_from_feed(feed, raw, now):
             if outlet and title.endswith(suffix):
                 title = title[: -len(suffix)].strip()
         outlet = normalize_outlet(outlet)
-        if outlet not in S.OUTLETS:
-            continue  # 화이트리스트 밖 매체 제외
+        if feed.get("brand") and (not feed.get("brand_of") or outlet in feed["brand_of"]):
+            outlet = feed["brand"]  # site: 로 좁힌 검색이라 전문 섹션(시그널·마켓인사이트 등) 이름으로 표시
+        if outlet not in S.OUTLETS or outlet in S.PAYWALL_OUTLETS:
+            continue  # 화이트리스트 밖 매체·유료 전용 매체(본문 확인 불가) 제외
         title = clean_title(title)
         ts = e["pub"] or now
         if now - ts > feed.get("max_age_h", MAX_AGE_H) * 3600 or ts - now > 3600:
@@ -282,7 +284,7 @@ def items_from_feed(feed, raw, now):
             for href, rt, ro in GN_RELATED_RE.findall(html.unescape(e["desc_html"])):
                 ro_n = normalize_outlet(strip_html(ro))
                 rt = clean_title(strip_html(rt))
-                if ro_n in S.OUTLETS and rt and not excluded(rt) and not is_noise(rt) and href.startswith("http"):
+                if ro_n in S.OUTLETS and ro_n not in S.PAYWALL_OUTLETS and rt and not excluded(rt) and not is_noise(rt) and href.startswith("http"):
                     related.append((href, rt, ro_n))
             if len(related) > 1:
                 group = hashlib.md5(e["link"].encode()).hexdigest()[:10]
@@ -346,6 +348,11 @@ def classify(item):
     ib_sub = next((k for k in ("ecm", "mna") if contains_any(t, S.IB_SUB_WORDS[k])), None)
     if item.get("tab") == "ipo" or (is_ipo and tab in ("stocks", "economy", "ib", "funding", None)):
         return "ipo", None
+    is_crypto = contains_any(item["title"], S.CRYPTO_WORDS) > 0
+    if item.get("tab") == "crypto" or (is_crypto and tab in ("stocks", "economy", "crypto", "ib", None)):
+        return "crypto", None
+    if tab == "crypto":
+        tab = "economy"
     is_funding = contains_any(t, S.FUNDING_WORDS) > 0
     if item.get("tab") == "funding" or (is_funding and tab in ("stocks", "economy", "ib", None)):
         return ("funding", None) if is_funding or item.get("tab") == "funding" else (tab, None)
@@ -539,7 +546,8 @@ def _has_any(text, words):
 
 
 def specialist_boost(i):
-    """더벨·딜사이트 보도면 최우선(×1.6), 인베스트조선·바이오스펙테이터는 ×1.25. 대표 기사도 전문매체 기사로."""
+    """딜사이트·인베스트조선·서울경제 시그널·이데일리 마켓in 보도면 최우선(×1.6), 그 밖의 IB 전문매체는 ×1.25. 대표 기사도 전문매체 기사로.
+    (더벨은 유료회원 전용이라 본문을 볼 수 없어 수집하지 않음)"""
     top = [a for a in i["articles"] if a["outlet"] in S.TOP_SPECIALISTS]
     other = [a for a in i["articles"] if a["outlet"] in S.IB_SPECIALIST_OUTLETS]
     pick = (top or other or [None])[0]
@@ -584,7 +592,7 @@ def funding_adjust(issues):
 
 def ipo_adjust(issues):
     """IPO 탭: 수요예측·청약·신고서 같은 일정성 기사는 빼고(논란·철회·제도 등 이슈성 예외),
-    상장 전 대규모 펀딩·주관사·상장 추진/연기·몸값·제도 변화를 위로. IB 전문매체(더벨 등) 보도는 가점."""
+    상장 전 대규모 펀딩·주관사·상장 추진/연기·몸값·제도 변화를 위로. IB 전문매체(딜사이트 등) 보도는 가점."""
     out = []
     for i in issues:
         text = " ".join(a["title"] for a in i["articles"][:3])
@@ -634,7 +642,7 @@ def _entity_tokens(title, generic):
     return {ENTITY_ALIASES.get(w, w) for w in tokens(t) if len(w) >= 2 and w not in generic}
 
 
-TAB_ORDER = ("economy", "stocks", "realestate", "ipo", "ib", "funding")
+TAB_ORDER = ("economy", "stocks", "realestate", "ipo", "ib", "funding", "crypto")
 # 경제·주식·부동산에서 '같은 이슈' 판단 때 무시하는 흔한 단어
 GENERAL_GENERIC = set("""환율 금리 기준금리 물가 코스피 코스닥 증시 외국인 기관 개인 순매수 순매도 아파트 서울 집값 전세 월세 매매
 부동산 미국 연준 한국 정부 한은 대출 가계 수출 반도체 주가 지수 상승 하락 급등 급락 마감 출발 시장 투자자 정책 규제
@@ -879,7 +887,7 @@ def build_snapshot(prev_snapshot=None):
 
     # 탭 사이 중복: 더 구체적인 탭(IPO > IB > 부동산 > 주식 > 경제)에만 남김
     taken = []
-    for tab in ("ipo", "ib", "funding", "realestate", "stocks", "economy"):
+    for tab in ("ipo", "ib", "funding", "crypto", "realestate", "stocks", "economy"):
         keep = []
         for iss in ranked[tab]:
             if any(same_story(iss, o) for o in taken):
@@ -1036,7 +1044,7 @@ def update_timeline(store, snap):
     if day["slots"] and day["slots"][-1]["t"] == slot:
         return False
     entry = {"t": slot, "tabs": {}}
-    for tab in ("economy", "stocks", "realestate", "ipo", "ib", "funding"):
+    for tab in ("economy", "stocks", "realestate", "ipo", "ib", "funding", "crypto"):
         entry["tabs"][tab] = [dict(title=i["title"], link=i["link"], outlet=i["outlet"], count=i["count"])
                               for i in snap["tabs"].get(tab, {}).get("issues", [])[:3]]
     q = {m["sym"]: m for m in snap["markets"]}

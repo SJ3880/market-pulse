@@ -19,7 +19,7 @@ OUTLETS = {
     "한국경제": 0.95, "한경": 0.95, "매일경제": 0.95, "서울경제": 0.95, "머니투데이": 0.92,
     "이데일리": 0.92, "파이낸셜뉴스": 0.9, "아시아경제": 0.9, "헤럴드경제": 0.88,
     "조선비즈": 0.92, "비즈워치": 0.88, "더벨": 1.0, "딜사이트": 1.0, "인베스트조선": 0.95,
-    "바이오스펙테이터": 0.95, "플래텀": 0.82, "벤처스퀘어": 0.8, "아웃스탠딩": 0.82, "블로터": 0.8, "팍스넷뉴스": 0.85,
+    "바이오스펙테이터": 0.95, "서울경제 시그널": 1.0, "이데일리 마켓in": 0.98, "매경 레이더M": 0.97, "IPO스탁": 0.85, "플래텀": 0.82, "벤처스퀘어": 0.8, "아웃스탠딩": 0.82, "블로터": 0.8, "팍스넷뉴스": 0.85,
     "한국경제TV": 0.85, "SBS Biz": 0.88, "연합뉴스TV": 0.9, "이투데이": 0.85, "뉴스핌": 0.85,
     "아주경제": 0.85, "디지털타임스": 0.85, "전자신문": 0.85, "머니S": 0.8, "한국금융신문": 0.82,
     # 종합지·방송
@@ -27,6 +27,9 @@ OUTLETS = {
     "한국일보": 0.85, "국민일보": 0.82, "세계일보": 0.8, "서울신문": 0.82, "문화일보": 0.82,
     "KBS": 0.9, "KBS 뉴스": 0.9, "MBC": 0.88, "MBC 뉴스": 0.88, "SBS": 0.88, "SBS 뉴스": 0.88,
     "JTBC": 0.85, "YTN": 0.88, "MBN": 0.82, "채널A": 0.8, "TV조선": 0.8,
+    # 가상자산 전문
+    "코인데스크코리아": 0.9, "블록미디어": 0.88, "디센터": 0.88, "토큰포스트": 0.8, "CoinDesk": 0.95, "The Block": 0.9,
+    "Cointelegraph": 0.82, "Decrypt": 0.85, "디지털애셋": 0.82,
     # 해외
     "Reuters": 1.0, "Bloomberg": 1.0, "Bloomberg.com": 1.0, "The Wall Street Journal": 1.0,
     "WSJ": 1.0, "Financial Times": 1.0, "CNBC": 0.95, "Associated Press": 0.95, "AP News": 0.95,
@@ -46,7 +49,13 @@ OUTLET_ALIASES = {
     "ft.com": "Financial Times", "The Associated Press": "Associated Press", "AP": "Associated Press",
     "bloomberg.com": "Bloomberg", "Yahoo Finance UK": "Yahoo Finance", "MarketWatch.com": "MarketWatch",
     "조선일보 경제": "조선일보", "biz.chosun.com": "조선비즈", "edaily": "이데일리",
+    "coindesk.com": "CoinDesk", "CoinDesk Korea": "코인데스크코리아", "코인데스크 코리아": "코인데스크코리아", "블록미디어(Blockmedia)": "블록미디어",
+    "Blockmedia": "블록미디어", "decenter.kr": "디센터", "TokenPost": "토큰포스트", "theblock.co": "The Block", "cointelegraph.com": "Cointelegraph",
 }
+
+
+# 유료회원 전용이라 내용(요약)을 볼 수 없는 매체 → 수집에서 아예 제외
+PAYWALL_OUTLETS = {"더벨", "마켓인사이트"}
 
 
 def gn(q, hours=None, days=None):
@@ -90,12 +99,20 @@ FEEDS = [
     dict(id="gn_ipo_val", label="Google 뉴스 · 몸값/엑시트", kind="gnews", url=gn("IPO 몸값 OR 상장 기업가치 OR 구주매출 OR FI 엑시트 OR 투자금 회수 IPO OR 밸류에이션 논란", days=3), tab="ipo"),
     dict(id="gn_ipo_rule", label="Google 뉴스 · 상장 제도", kind="gnews", url=gn("상장 제도 개편 OR 기술특례 제도 OR 상장심사 개선 OR 공모주 제도 OR 의무보유확약 OR 코스닥 상장 요건", days=3), tab="ipo"),
     dict(id="gn_ipo_league", label="Google 뉴스 · IPO/ECM 리그테이블", kind="gnews", url=gn("IPO 리그테이블 OR ECM 리그테이블 OR IPO 주관 순위 OR IPO 주관 실적 OR 주식자본시장 순위", days=10), tab="ipo", max_age_h=240),
-    dict(id="gn_ipo_league_sp", label="더벨/딜사이트 · IPO 리그테이블", kind="gnews", url=gn("리그테이블 IPO (site:thebell.co.kr OR site:dealsite.co.kr)", days=14), tab="ipo", max_age_h=336),
-    dict(id="gn_ipo_dealsite", label="딜사이트 · IPO", kind="gnews", url=gn("IPO OR 상장 OR 상장예비심사 OR 주관사 site:dealsite.co.kr", days=3), tab="ipo"),
-    dict(id="gn_ipo_thebell2", label="더벨 · IPO", kind="gnews", url=gn("IPO OR 상장 OR 상장예비심사 OR 주관사 site:thebell.co.kr", days=3), tab="ipo"),
+    dict(id="gn_ipo_league_sp", label="딜사이트/인베스트조선 · IPO 리그테이블", kind="gnews", url=gn("리그테이블 IPO (site:dealsite.co.kr OR site:investchosun.com)", days=14), tab="ipo", max_age_h=336),
+    dict(id="gn_ipo_dealsite", label="딜사이트 · IPO", kind="gnews", brand="딜사이트", url=gn("IPO OR 상장 OR 상장예비심사 OR 주관사 site:dealsite.co.kr", days=3), tab="ipo"),
+    # 딜사이트 같은 IB·IPO 전문 매체 (모두 무료로 본문 확인 가능)
+    dict(id="gn_ipo_signal", label="서울경제 시그널 · IPO", kind="gnews", brand="서울경제 시그널",
+         url=gn("IPO OR 상장 OR 프리IPO OR 주관사 OR 예비심사 site:signal.sedaily.com", days=3), tab="ipo"),
+    dict(id="gn_ipo_marketin", label="이데일리 마켓in · IPO", kind="gnews", brand="이데일리 마켓in",
+         url=gn("IPO OR 상장 OR 프리IPO OR 주관사 site:marketin.edaily.co.kr", days=3), tab="ipo"),
+    dict(id="gn_ipo_radar", label="매경 레이더M · IPO", kind="gnews", brand="매경 레이더M", brand_of=["매일경제"],
+         url=gn('"레이더M" IPO OR "레이더M" 상장 OR "레이더M" 프리IPO', days=3), tab="ipo"),
+    dict(id="gn_ipo_paxnet", label="팍스넷뉴스 · IPO", kind="gnews", brand="팍스넷뉴스",
+         url=gn("IPO OR 상장 OR 프리IPO OR 주관사 site:paxnetnews.com", days=3), tab="ipo"),
     dict(id="gn_ipo_abroad", label="Google 뉴스 · 해외 상장", kind="gnews", url=gn("나스닥 상장 추진 OR 미국 상장 추진 OR 해외 상장 OR 이중상장", days=3), tab="ipo"),
-    dict(id="gn_ipo_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IPO", kind="gnews",
-         url=gn("IPO OR 상장 OR 프리IPO (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ipo"),
+    dict(id="gn_ipo_investchosun", label="인베스트조선 · IPO", kind="gnews", brand="인베스트조선",
+         url=gn("IPO OR 상장 OR 프리IPO OR 주관사 site:investchosun.com", days=3), tab="ipo"),
     dict(id="gn_ipo_krx", label="Google 뉴스 · 거래소 상장심사", kind="gnews", url=gn("거래소 상장심사 OR 상장예비심사 미승인 OR 상장위원회 OR 심사 지연 OR 예비심사 청구 OR 상장 심사 통과", days=3), tab="ipo"),
     dict(id="gn_ipo_fss", label="Google 뉴스 · 금감원·당국 IPO", kind="gnews", url=gn("금감원 증권신고서 정정 OR 금감원 IPO OR 뻥튀기 상장 OR 부실 상장 OR 주관사 책임 OR IPO 제도 개선", days=3), tab="ipo"),
     dict(id="gn_ipo_dup", label="Google 뉴스 · 중복상장/물적분할", kind="gnews", url=gn("중복상장 OR 쪼개기 상장 OR 물적분할 상장 OR 자회사 상장 OR 모회사 주주 보호", days=3), tab="ipo"),
@@ -106,19 +123,27 @@ FEEDS = [
     dict(id="gn_mna", label="Google 뉴스 · M&A", kind="gnews", url=gn("인수합병 OR 경영권 매각 OR 우선협상대상자 OR 지분 인수 OR 사모펀드 인수", days=3), tab="ib", sub="mna"),
     dict(id="gn_mna2", label="Google 뉴스 · 매각/인수전", kind="gnews", url=gn("매각 추진 OR 인수전 OR 본입찰 OR 예비입찰 OR M&A 시장", days=3), tab="ib", sub="mna"),
     dict(id="gn_ib_league", label="Google 뉴스 · IB 리그테이블", kind="gnews", url=gn("리그테이블 M&A OR 유상증자 리그테이블 OR 회사채 리그테이블 OR 인수금융 리그테이블 OR M&A 자문 순위", days=10), tab="ib", max_age_h=240),
-    dict(id="gn_ib_league_sp", label="더벨/딜사이트 · IB 리그테이블", kind="gnews", url=gn("리그테이블 (site:thebell.co.kr OR site:dealsite.co.kr)", days=14), tab="ib", max_age_h=336),
-    dict(id="gn_ib_dealsite", label="딜사이트 · IB", kind="gnews", url=gn("유상증자 OR 블록딜 OR 인수 OR 매각 OR 메자닌 site:dealsite.co.kr", days=3), tab="ib"),
-    dict(id="gn_ib_thebell2", label="더벨 · IB", kind="gnews", url=gn("유상증자 OR 블록딜 OR 인수 OR 매각 OR 메자닌 site:thebell.co.kr", days=3), tab="ib"),
+    dict(id="gn_ib_league_sp", label="딜사이트/인베스트조선 · IB 리그테이블", kind="gnews", url=gn("리그테이블 (site:dealsite.co.kr OR site:investchosun.com)", days=14), tab="ib", max_age_h=336),
+    dict(id="gn_ib_dealsite", label="딜사이트 · IB", kind="gnews", brand="딜사이트", url=gn("유상증자 OR 블록딜 OR 인수 OR 매각 OR 메자닌 site:dealsite.co.kr", days=3), tab="ib"),
     # ── 비상장 투자 (스타트업·바이오 투자유치) ──
     dict(id="gn_fund_series", label="Google 뉴스 · 시리즈 투자유치", kind="gnews", url=gn("시리즈A OR 시리즈B OR 시리즈C OR 시리즈D OR 프리A 투자 유치", days=3), tab="funding"),
     dict(id="gn_fund_vc", label="Google 뉴스 · VC 투자", kind="gnews", url=gn("투자 유치 스타트업 OR 벤처캐피탈 투자 OR 누적 투자금 OR 기업가치 인정 OR 브릿지 투자", days=3), tab="funding"),
     dict(id="gn_fund_bio", label="Google 뉴스 · 바이오 투자유치", kind="gnews", url=gn("바이오 투자 유치 OR 바이오 시리즈 OR 신약 개발사 투자 유치", days=3), tab="funding"),
-    dict(id="gn_fund_sp", label="더벨/딜사이트 · 투자유치", kind="gnews", url=gn("투자 유치 OR 시리즈 OR 펀딩 (site:thebell.co.kr OR site:dealsite.co.kr)", days=3), tab="funding"),
-    dict(id="gn_fund_biosp", label="바이오스펙테이터 · 투자유치", kind="gnews", url=gn("투자 유치 OR 시리즈 OR 펀딩 site:biospectator.com", days=7), tab="funding", max_age_h=168),
+    dict(id="gn_fund_sp", label="딜사이트 · 투자유치", kind="gnews", brand="딜사이트", url=gn("투자 유치 OR 시리즈 OR 펀딩 site:dealsite.co.kr", days=3), tab="funding"),
+    dict(id="gn_fund_biosp", label="바이오스펙테이터 · 투자유치", kind="gnews", brand="바이오스펙테이터", url=gn("투자 유치 OR 시리즈 OR 펀딩 site:biospectator.com", days=7), tab="funding", max_age_h=168),
     dict(id="gn_fund_platum", label="플래텀/벤처스퀘어 · 투자유치", kind="gnews", url=gn("투자 유치 (site:platum.kr OR site:venturesquare.net)", days=3), tab="funding"),
-    dict(id="gn_ib_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IB", kind="gnews",
-         url=gn("유상증자 OR 블록딜 OR 전환사채 OR M&A OR 경영권 OR 인수 (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ib"),
+    dict(id="gn_ib_investchosun", label="인베스트조선 · IB", kind="gnews", brand="인베스트조선",
+         url=gn("유상증자 OR 블록딜 OR 전환사채 OR M&A OR 경영권 OR 인수 site:investchosun.com", days=3), tab="ib"),
+    dict(id="gn_ib_signal", label="서울경제 시그널 · IB", kind="gnews", brand="서울경제 시그널",
+         url=gn("유상증자 OR 블록딜 OR 인수 OR 매각 OR 경영권 OR 메자닌 site:signal.sedaily.com", days=3), tab="ib"),
     dict(id="gn_ib_en", label="Google News · M&A/Offerings", kind="gnews", url=gn_en("acquisition deal billion OR merger agreement OR share offering OR block trade", days=3), tab="ib", lang="en"),
+    # ── 크립토 (비트코인 중심) ──
+    dict(id="gn_cr_btc", label="Google 뉴스 · 비트코인", kind="gnews", url=gn("비트코인 OR 이더리움 OR 가상자산 시세 OR 암호화폐"), tab="crypto"),
+    dict(id="gn_cr_rule", label="Google 뉴스 · 가상자산 제도", kind="gnews", url=gn("가상자산 거래소 OR 업비트 OR 빗썸 OR 스테이블코인 OR 디지털자산기본법 OR 가상자산 ETF OR 김치 프리미엄", days=2), tab="crypto"),
+    dict(id="gn_cr_sp", label="코인데스크코리아/블록미디어/디센터", kind="gnews",
+         url=gn("비트코인 OR 가상자산 OR 스테이블코인 (site:coindeskkorea.com OR site:blockmedia.co.kr OR site:decenter.kr OR site:tokenpost.kr)", days=2), tab="crypto"),
+    dict(id="gn_cr_en", label="Google News · Bitcoin/Crypto", kind="gnews", url=gn_en("bitcoin OR crypto market OR bitcoin ETF OR stablecoin"), tab="crypto", lang="en"),
+    dict(id="coindesk", label="CoinDesk", kind="rss", outlet="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/", tab="crypto", lang="en"),
     # ── 부동산 ──
     dict(id="gn_apt", label="Google 뉴스 · 아파트값", kind="gnews", url=gn("아파트값 OR 집값 OR 아파트 매매 OR 부동산원"), tab="realestate"),
     dict(id="gn_jeonse", label="Google 뉴스 · 전월세", kind="gnews", url=gn("전세 OR 월세 OR 전셋값 OR 임대차"), tab="realestate"),
@@ -201,6 +226,8 @@ EXCLUDE_PATTERNS = [
 ]
 
 TAB_RULES = {
+    "crypto": ["비트코인", "이더리움", "가상자산", "가상화폐", "암호화폐", "코인", "스테이블코인", "업비트", "빗썸", "리플",
+               "솔라나", "알트코인", "블록체인", "김치 프리미엄", "bitcoin", "crypto", "ethereum", "stablecoin", "BTC", "ETH"],
     "funding": ["투자 유치", "투자유치", "시리즈", "펀딩", "스타트업", "벤처", "VC", "기업가치", "누적 투자", "바이오",
                 "funding", "raises", "startup"],
     "ipo": ["IPO", "프리IPO", "상장", "주관사", "몸값", "기업가치", "구주매출", "투자 유치", "엑시트", "기술특례", "스팩",
@@ -241,8 +268,9 @@ IPO_PRIORITY = {
     "몸값·엑시트": ["몸값", "구주매출", "엑시트", "투자금 회수", "밸류에이션", "기업가치"],
     "제도 변화": ["제도", "개편", "개선", "요건", "의무보유", "상장심사", "금융당국", "거래소"],
 }
-IB_SPECIALIST_OUTLETS = ["더벨", "딜사이트", "인베스트조선", "바이오스펙테이터"]
-TOP_SPECIALISTS = ["더벨", "딜사이트"]          # IPO·IB·비상장 투자 탭 최우선 매체
+IB_SPECIALIST_OUTLETS = ["딜사이트", "인베스트조선", "서울경제 시그널", "이데일리 마켓in", "매경 레이더M",
+                         "팍스넷뉴스", "바이오스펙테이터"]
+TOP_SPECIALISTS = ["딜사이트", "인베스트조선", "서울경제 시그널", "이데일리 마켓in"]          # IPO·IB·비상장 투자 탭 최우선 매체
 LEAGUE_WORDS = ["리그테이블", "주관 순위", "주관 실적", "자문 순위", "league table"]
 # 비상장 투자 탭
 FUNDING_WORDS = ["시리즈A", "시리즈B", "시리즈C", "시리즈D", "시리즈E", "프리A", "프리 A", "시드 투자", "시드투자", "투자 유치",
@@ -300,3 +328,8 @@ RELEVANT_WORDS = [
 ]
 # 제목 앞머리에서 지울 꼬리표
 TITLE_TAGS_STRIP = r"^\s*\[(그래픽|표|영상|사진|이런국장 저런주식|집코노미[^\]]*|부동산360|이슈 ?분석|오늘의 ?\w+)\]\s*"
+
+# 크립토 탭으로 보내는 단어 (어느 피드에서 왔든)
+CRYPTO_WORDS = ["비트코인", "이더리움", "가상자산", "가상화폐", "암호화폐", "스테이블코인", "업비트", "빗썸", "코인베이스",
+                "알트코인", "리플", "솔라나", "김치 프리미엄", "디지털자산", "bitcoin", "crypto", "ethereum", "stablecoin",
+                "Coinbase", "Binance", "바이낸스"]
