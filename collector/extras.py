@@ -425,6 +425,39 @@ def fred_10y(http_get):
     return _cached("fred10", 3600, run)
 
 
+# ─────────────────────────── 코스피·코스닥 실시간 (네이버) ───────────────────────────
+def _f(x):
+    try:
+        return float(str(x).replace(",", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_realtime_index(http_get):
+    """Yahoo 지수는 수 분 늦을 수 있어, 장중에는 네이버 실시간 지수 값을 우선 사용."""
+    out = {}
+    for mkt, sym in (("KOSPI", "^KS11"), ("KOSDAQ", "^KQ11")):
+        try:
+            txt = _decode(http_get(f"https://m.stock.naver.com/api/index/{mkt}/basic", timeout=5,
+                                   fixture_key="nv_basic_" + mkt))
+            j = json.loads(txt)
+            price = _f(j.get("closePrice"))
+            chg = _f(j.get("compareToPreviousClosePrice"))
+            pct = _f(j.get("fluctuationsRatio"))
+            if price is None:
+                raise ValueError("closePrice 없음")
+            falling = str((j.get("compareToPreviousPrice") or {}).get("name", "")).upper() in ("FALLING", "LOWER_LIMIT")
+            if chg is not None and falling and chg > 0:
+                chg = -chg
+            if pct is not None and falling and pct > 0:
+                pct = -pct
+            out[sym] = {"price": price, "change": chg, "pct": pct,
+                        "time": j.get("localTradedAt") or j.get("tradedAt"), "status": j.get("marketStatus")}
+        except Exception as ex:  # noqa: BLE001
+            _dbg("rt_" + mkt, f"{type(ex).__name__}: {ex}\n" + (locals().get("txt") or "")[:2000])
+    return out
+
+
 def collect_extras(http_get, fetch_quote):
     keys = {"ecos": os.environ.get("ECOS_KEY", "").strip(), "reb": os.environ.get("REB_KEY", "").strip()}
     jobs = {
@@ -433,6 +466,7 @@ def collect_extras(http_get, fetch_quote):
         "flow": lambda: fetch_flow(http_get),
         "sectors": lambda: fetch_sectors(fetch_quote),
         "bigcaps": lambda: fetch_bigcaps(fetch_quote),
+        "realtime": lambda: {"ok": True, "quotes": fetch_realtime_index(http_get)},
     }
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {k: ex.submit(f) for k, f in jobs.items()}

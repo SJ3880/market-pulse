@@ -19,6 +19,12 @@
 <script>
   // 데이터 위치를 직접 지정하고 싶을 때만 아래 줄의 주석을 풀어 주세요.
   // window.MP_DATA_BASE = "https://raw.githubusercontent.com/아이디/저장소이름/data/";
+  // 불편사항 접수함 연결 (README '불편사항 접수' 참고) — form: 구글 설문 주소(끝을 formResponse 로), field: 내용 칸 번호
+  window.MP_FEEDBACK = {
+    form: "",          // 예) "https://docs.google.com/forms/d/e/1FAIpQ.../formResponse"
+    field: "",         // 예) "entry.123456789"
+    contactField: ""   // (선택) 연락처 칸 번호. 없으면 비워 두기
+  };
   try { const t = localStorage.getItem("mp-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
 </head>
@@ -34,6 +40,10 @@
       <span id="statusText">불러오는 중</span>
     </div>
     <div class="top-actions">
+      <button class="fb-btn" id="feedbackBtn" title="불편사항·의견 보내기">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>
+        <span>불편사항</span>
+      </button>
       <button class="icon-btn" id="refreshBtn" title="지금 새로고침" aria-label="지금 새로고침">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
       </button>
@@ -50,6 +60,7 @@
     <button role="tab" data-tab="realestate">부동산</button>
     <button role="tab" data-tab="ipo">IPO</button>
     <button role="tab" data-tab="ib">IB</button>
+    <button role="tab" data-tab="funding">비상장 투자</button>
     <button role="tab" data-tab="policy">정책·발표</button>
     <button role="tab" data-tab="timeline">하루 흐름</button>
     <button role="tab" data-tab="calendar">일정</button>

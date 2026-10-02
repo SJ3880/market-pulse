@@ -20,9 +20,9 @@
   }
   const BASE = dataBase();
   const POLL_SEC = 60;
-  const POLL_OFFSET = 40; // 수집기는 매분 0초에 시작해 20~30초 안에 올림 → 매분 40초에 확인
+  const POLL_SECS = [10, 40]; // 수집기는 0초·30초에 시작(장중) → 10초·40초에 확인
 
-  const TABS = { briefing: "브리핑", economy: "경제", stocks: "주식시장", realestate: "부동산", ipo: "IPO", ib: "IB", policy: "정책·발표", timeline: "하루 흐름", calendar: "일정" };
+  const TABS = { briefing: "브리핑", economy: "경제", stocks: "주식시장", realestate: "부동산", ipo: "IPO", ib: "IB", funding: "비상장 투자", policy: "정책·발표", timeline: "하루 흐름", calendar: "일정" };
   const SUBS = { all: "전체", kr: "국내", global: "해외" };
   const IB_SUBS = { all: "전체", ecm: "유증·블록딜·메자닌", mna: "M&A" };
   const SIDE_MARKETS = {
@@ -31,6 +31,7 @@
     realestate: ["^TNX", "KRW=X", "^KS11"],
     ipo: ["^KQ11", "^KS11", "^IXIC", "^VIX"],
     ib: ["^KS11", "^KQ11", "^VIX", "KRW=X"],
+    funding: ["^KQ11", "^IXIC", "^KS11", "^VIX"],
   };
 
   const S = {
@@ -98,7 +99,7 @@
     S.snap = snap; S.error = null; S.lastOk = Date.now();
     // 수집기가 직전 스냅샷과 비교해 표시한 '새 진입' 이슈 (첫 로딩 때는 강조하지 않음)
     S.fresh = firstLoad ? new Set() : new Set(
-      ["economy", "stocks", "realestate", "ipo", "ib"].flatMap((t) => (snap.tabs[t]?.issues || []).slice(0, 10)).filter((i) => i.is_new).map((i) => i.link));
+      ["economy", "stocks", "realestate", "ipo", "ib", "funding"].flatMap((t) => (snap.tabs[t]?.issues || []).slice(0, 10)).filter((i) => i.is_new).map((i) => i.link));
     S.flashOnce = true;
     if (S.tab === "timeline" && S.tl.dates && S.tl.sel === S.tl.dates[0]) loadTimeline();
     renderAll();
@@ -107,7 +108,8 @@
 
   function schedule() {
     const now = new Date();
-    let wait = ((POLL_OFFSET - now.getSeconds()) + 60) % 60 || 60;
+    const sec = now.getSeconds();
+    let wait = Math.min(...POLL_SECS.map((p) => ((p - sec) + 60) % 60 || 60));
     S.nextAt = Date.now() + wait * 1000;
     clearTimeout(S.timer);
     S.timer = setTimeout(async () => {
@@ -289,8 +291,9 @@
     economy: "금리·환율·물가·수출 등 거시경제 이슈",
     stocks: "국내외 증시, 수급, IPO·공모주",
     realestate: "집값·전월세·대출규제·공급",
-    ipo: "상장 전 대규모 투자유치·주관사 선정·상장 추진/연기/철회·몸값·FI 엑시트·제도 변화 등 IPO 관련 이슈 (수요예측·청약 등 일정 기사 제외)",
-    ib: "여러 매체가 다룬 대형 유상증자·블록딜·메자닌(CB·EB·BW)·M&A",
+    ipo: "더벨·딜사이트 우선 · 프리IPO·주관사·상장 추진/연기/철회·몸값·심사·제도·리그테이블 (수요예측·청약 등 일정 기사 제외)",
+    ib: "더벨·딜사이트 우선 · 대형 유상증자·블록딜·메자닌(CB·EB·BW)·M&A·리그테이블",
+    funding: "더벨·딜사이트·바이오스펙테이터 우선 · 비상장사 시드~시리즈 투자유치, 대규모 펀딩, 기업가치",
   };
 
   function renderMain() {
@@ -319,7 +322,7 @@
     }
     const list = issues.length ? issues.map((iss, i) => issueHTML(iss, i)).join("")
       : `<li class="empty">지금은 이 구분에 해당하는 이슈가 없어요. 다른 구분을 눌러 보세요.</li>`;
-    const evCats = { economy: ["금리", "경제"], stocks: ["금리", "주식"], realestate: ["금리", "부동산"], ipo: ["금리", "주식"], ib: ["금리", "주식"] }[t];
+    const evCats = { economy: ["금리", "경제"], stocks: ["금리", "주식"], realestate: ["금리", "부동산"], ipo: ["금리", "주식"], ib: ["금리", "주식"], funding: ["금리", "주식"] }[t];
     const top = t === "stocks" ? marketPanelHTML() : t === "realestate" ? realestateIndicatorsHTML() : "";
     return `${top}<div class="grid">
       <section class="panel" aria-label="${TABS[t]} 이슈">
@@ -336,7 +339,7 @@
   }
 
   function briefingHTML() {
-    const tabs = ["economy", "stocks", "realestate", "ipo", "ib"];
+    const tabs = ["economy", "stocks", "realestate", "ipo", "ib", "funding"];
     const line = ["^KS11", "^KQ11", "KRW=X", "^GSPC", "^IXIC", "^TNX"].map(quote).filter((m) => m && m.price != null)
       .map((m) => `<span><strong>${esc(m.name)}</strong><span class="num">${fmt(m.price, m.digits)}</span> <span class="num ${dir(m.change)}">${pct(m.pct)}</span></span>`).join("")
       + (XT().flow?.markets?.KOSPI ? `<span><strong>외국인(코스피)</strong><span class="num ${dir(XT().flow.markets.KOSPI.foreign)}">${eok(XT().flow.markets.KOSPI.foreign)}</span></span>` : "");
@@ -358,7 +361,7 @@
       <div class="brief-top">${picks}</div>
       <div class="grid">
         <section class="panel" aria-label="전체 이슈 순위">
-          <div class="list-head"><div><h1>지금 가장 뜨거운 이슈</h1><p>경제·주식·부동산·IPO·IB 전체를 같은 기준으로 줄 세운 상위 10개</p></div></div>
+          <div class="list-head"><div><h1>지금 가장 뜨거운 이슈</h1><p>경제·주식·부동산·IPO·IB·비상장 투자 전체를 같은 기준으로 줄 세운 상위 10개</p></div></div>
           <ol class="issues">${all.map((iss, i) => issueHTML(iss, i, { tabLabel: TABS[iss._tab] })).join("")}</ol>
         </section>
         <aside class="side">
@@ -672,7 +675,7 @@
     if (!day && S.tl.err) return `<section class="panel"><div class="list-head"><div class="chips">${chips}</div></div><div class="empty">이 날짜 기록을 불러오지 못했어요. 잠시 뒤 다시 눌러 보세요.</div></section>`;
     if (!day) { loadTimeline(S.tl.sel); return `<section class="panel"><div class="list-head"><div class="chips">${chips}</div></div><div class="empty">불러오는 중이에요.</div></section>`; }
     const slots = day.slots || [];
-    const cols = ["economy", "stocks", "realestate", "ipo", "ib"].map((t) => {
+    const cols = ["economy", "stocks", "realestate", "ipo", "ib", "funding"].map((t) => {
       const segs = segmentsOf(slots, t);
       return `<div class="tl-col"><h2 class="sec">${TABS[t]} 1위 변화 <small>${segs.length}번 바뀜</small></h2>
         ${segs.length ? `<ol class="tl">${segs.map((g) => `<li><span class="tm num">${g.start}${g.end !== g.start ? "–" + g.end : ""}<small>${dur(g.start, g.end)}</small></span>
@@ -693,7 +696,7 @@
   function findIssue(o) {
     // 타임라인 등 일부 정보만 있는 항목은 현재 이슈 목록에서 같은 기사/비슷한 제목을 찾아 보강
     if (o.articles) return o;
-    const all = ["economy", "stocks", "realestate", "ipo", "ib"].flatMap((t) => (S.snap?.tabs[t]?.issues || []).map((i) => ({ ...i, _tabLabel: TABS[t] })));
+    const all = ["economy", "stocks", "realestate", "ipo", "ib", "funding"].flatMap((t) => (S.snap?.tabs[t]?.issues || []).map((i) => ({ ...i, _tabLabel: TABS[t] })));
     const b = bgr(o.title);
     return all.find((i) => i.link === o.link || i.articles.some((a) => a.link === o.link))
       || all.find((i) => jac(bgr(i.title), b) >= 0.5) || o;
@@ -738,11 +741,62 @@
     if (qv.hidden) return;
     qv.classList.remove("on");
     document.body.classList.remove("qv-open");
+    setTimeout(() => qv.classList.remove("fb"), 180);
     setTimeout(() => { qv.hidden = true; }, 180);
     S.qvOpener?.focus?.();
   }
   $("#qv").addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeQV(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeQV(); });
+
+  // ───────── 불편사항 접수 (사이트 안에서 바로 전송) ─────────
+  // 보낸 내용은 관리자의 구글 설문 응답함으로 조용히 저장됨 (이용자에게는 구글 화면이 보이지 않음)
+  function openFeedback() {
+    const cfg = window.MP_FEEDBACK || {};
+    const ready = cfg.form && cfg.field;
+    $("#qvBody").innerHTML = `
+      <h2 id="qvTitle">불편사항·의견 보내기</h2>
+      <p class="hint">불편했던 점, 있었으면 하는 기능을 편하게 적어 주세요. 보내신 내용은 사이트 관리자에게만 전달되고 다른 이용자에게는 보이지 않아요.</p>
+      <form id="fbForm" class="fb-form" novalidate>
+        <label for="fbText">내용</label>
+        <textarea id="fbText" rows="7" maxlength="2000" placeholder="예) IPO 탭에 해외 기사가 너무 많아요 / 모바일에서 글자가 작아요" required></textarea>
+        <label for="fbContact">답변 받을 연락처 <small>(선택)</small></label>
+        <input id="fbContact" type="text" maxlength="100" placeholder="이메일이나 카톡 아이디 — 비워 둬도 돼요">
+        <input id="fbHp" type="text" tabindex="-1" autocomplete="off" class="fb-hp" aria-hidden="true">
+        <div class="fb-row">
+          <span class="hint" id="fbMsg">${ready ? "" : "관리자가 아직 접수함을 연결하지 않았어요."}</span>
+          <button type="submit" class="fb-send" ${ready ? "" : "disabled"}>보내기</button>
+        </div>
+      </form>`;
+    const qv = $("#qv");
+    qv.hidden = false; qv.classList.add("fb");
+    document.body.classList.add("qv-open");
+    requestAnimationFrame(() => qv.classList.add("on"));
+    setTimeout(() => $("#fbText")?.focus(), 50);
+
+    $("#fbForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = $("#fbText").value.trim(), msg = $("#fbMsg"), btn = $("#fbForm .fb-send");
+      if ($("#fbHp").value) return;                       // 자동 스팸 차단
+      if (text.length < 2) { msg.textContent = "내용을 적어 주세요."; $("#fbText").focus(); return; }
+      let last = 0; try { last = +localStorage.getItem("mp-fb-last") || 0; } catch (err) { /* 무시 */ }
+      if (Date.now() - last < 30e3) { msg.textContent = "방금 보내셨어요. 30초 뒤에 다시 보낼 수 있어요."; return; }
+      const where = `[${TABS[S.tab] || S.tab} 탭 · ${innerWidth < 600 ? "모바일" : "PC"} · ${new Date().toLocaleString("ko-KR")}]`;
+      const body = new URLSearchParams();
+      body.append(cfg.field, `${text}\n\n${where}`);
+      if (cfg.contactField) body.append(cfg.contactField, $("#fbContact").value.trim());
+      else if ($("#fbContact").value.trim()) body.set(cfg.field, `${text}\n\n연락처: ${$("#fbContact").value.trim()}\n${where}`);
+      btn.disabled = true; msg.textContent = "보내는 중…";
+      try {
+        await fetch(cfg.form, { method: "POST", mode: "no-cors", body });   // 구글 설문은 응답 내용을 돌려주지 않음(no-cors)
+        try { localStorage.setItem("mp-fb-last", String(Date.now())); } catch (err) { /* 무시 */ }
+        $("#fbForm").innerHTML = `<div class="fb-done"><b>보내 주셔서 고마워요.</b><p class="hint">관리자에게 전달됐어요. 반영되면 사이트에 바로 적용할게요.</p></div>`;
+      } catch (err) {
+        btn.disabled = false;
+        msg.textContent = "전송에 실패했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.";
+      }
+    });
+  }
+  $("#feedbackBtn").addEventListener("click", openFeedback);
 
   // ───────── 이벤트 ─────────
   function setTab(t, focus = false) {

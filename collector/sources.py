@@ -18,7 +18,8 @@ OUTLETS = {
     "연합뉴스": 1.0, "연합인포맥스": 1.0, "뉴스1": 0.9, "뉴시스": 0.9,
     "한국경제": 0.95, "한경": 0.95, "매일경제": 0.95, "서울경제": 0.95, "머니투데이": 0.92,
     "이데일리": 0.92, "파이낸셜뉴스": 0.9, "아시아경제": 0.9, "헤럴드경제": 0.88,
-    "조선비즈": 0.92, "비즈워치": 0.88, "더벨": 0.95, "딜사이트": 0.9, "인베스트조선": 0.92,
+    "조선비즈": 0.92, "비즈워치": 0.88, "더벨": 1.0, "딜사이트": 1.0, "인베스트조선": 0.95,
+    "바이오스펙테이터": 0.95, "플래텀": 0.82, "벤처스퀘어": 0.8, "아웃스탠딩": 0.82, "블로터": 0.8, "팍스넷뉴스": 0.85,
     "한국경제TV": 0.85, "SBS Biz": 0.88, "연합뉴스TV": 0.9, "이투데이": 0.85, "뉴스핌": 0.85,
     "아주경제": 0.85, "디지털타임스": 0.85, "전자신문": 0.85, "머니S": 0.8, "한국금융신문": 0.82,
     # 종합지·방송
@@ -36,6 +37,9 @@ OUTLETS = {
 
 # 매체명 표기 흔들림 정리 (Google 뉴스 표기 → 표준명)
 OUTLET_ALIASES = {
+    "thebell": "더벨", "THE BELL": "더벨", "thebell.co.kr": "더벨", "더벨(thebell)": "더벨", "딜사이트(dealsite)": "딜사이트",
+    "DealSite": "딜사이트", "dealsite": "딜사이트", "dealsite.co.kr": "딜사이트", "딜사이트경제TV": "딜사이트",
+    "BioSpectator": "바이오스펙테이터", "biospectator.com": "바이오스펙테이터", "인베스트조선 (Invest Chosun)": "인베스트조선",
     "한국경제신문": "한국경제", "hankyung.com": "한국경제", "매경": "매일경제", "mk.co.kr": "매일경제",
     "연합뉴스 (Yonhap)": "연합뉴스", "Yonhap News Agency": "연합뉴스", "서울경제신문": "서울경제",
     "Reuters.com": "Reuters", "reuters.com": "Reuters", "wsj.com": "WSJ", "cnbc.com": "CNBC",
@@ -80,12 +84,15 @@ FEEDS = [
     dict(id="gn_semis", label="Google 뉴스 · 반도체/대형주", kind="gnews", url=gn("삼성전자 주가 OR SK하이닉스 주가 OR 반도체주"), tab="stocks"),
     dict(id="gn_nyse", label="Google 뉴스 · 뉴욕증시", kind="gnews", url=gn("뉴욕증시 OR 나스닥 OR S&P500 OR 엔비디아"), tab="stocks"),
     # ── IPO 관련 이슈 (더벨류: 상장 전 펀딩·주관사·상장 추진/연기·밸류에이션·제도, 최근 3일) ──
-    dict(id="gn_ipo_fund", label="Google 뉴스 · 상장 전 투자유치", kind="gnews", url=gn('프리IPO OR "pre-IPO" OR 시리즈C OR 시리즈D OR 투자 유치 기업가치 OR 브릿지 투자', days=3), tab="ipo"),
+    dict(id="gn_ipo_fund", label="Google 뉴스 · 상장 전 투자유치", kind="gnews", url=gn('프리IPO OR "pre-IPO" OR 상장 전 투자 OR IPO 앞두고 투자 유치', days=3), tab="ipo"),
     dict(id="gn_ipo_lead", label="Google 뉴스 · 주관사 선정", kind="gnews", url=gn("상장 주관사 선정 OR 대표주관사 선정 OR IPO 주관 경쟁 OR 주관사 교체", days=3), tab="ipo"),
     dict(id="gn_ipo_plan", label="Google 뉴스 · 상장 추진/연기/철회", kind="gnews", url=gn("상장 추진 OR 상장 연기 OR 상장 철회 OR IPO 재도전 OR 상장 재추진 OR IPO 대어", days=3), tab="ipo"),
     dict(id="gn_ipo_val", label="Google 뉴스 · 몸값/엑시트", kind="gnews", url=gn("IPO 몸값 OR 상장 기업가치 OR 구주매출 OR FI 엑시트 OR 투자금 회수 IPO OR 밸류에이션 논란", days=3), tab="ipo"),
     dict(id="gn_ipo_rule", label="Google 뉴스 · 상장 제도", kind="gnews", url=gn("상장 제도 개편 OR 기술특례 제도 OR 상장심사 개선 OR 공모주 제도 OR 의무보유확약 OR 코스닥 상장 요건", days=3), tab="ipo"),
-    dict(id="gn_ipo_league", label="Google 뉴스 · ECM 리그테이블", kind="gnews", url=gn("ECM 리그테이블 OR IPO 주관 실적 OR IPO 시장 전망 OR 증권사 IB 실적", days=3), tab="ipo"),
+    dict(id="gn_ipo_league", label="Google 뉴스 · IPO/ECM 리그테이블", kind="gnews", url=gn("IPO 리그테이블 OR ECM 리그테이블 OR IPO 주관 순위 OR IPO 주관 실적 OR 주식자본시장 순위", days=10), tab="ipo", max_age_h=240),
+    dict(id="gn_ipo_league_sp", label="더벨/딜사이트 · IPO 리그테이블", kind="gnews", url=gn("리그테이블 IPO (site:thebell.co.kr OR site:dealsite.co.kr)", days=14), tab="ipo", max_age_h=336),
+    dict(id="gn_ipo_dealsite", label="딜사이트 · IPO", kind="gnews", url=gn("IPO OR 상장 OR 상장예비심사 OR 주관사 site:dealsite.co.kr", days=3), tab="ipo"),
+    dict(id="gn_ipo_thebell2", label="더벨 · IPO", kind="gnews", url=gn("IPO OR 상장 OR 상장예비심사 OR 주관사 site:thebell.co.kr", days=3), tab="ipo"),
     dict(id="gn_ipo_abroad", label="Google 뉴스 · 해외 상장", kind="gnews", url=gn("나스닥 상장 추진 OR 미국 상장 추진 OR 해외 상장 OR 이중상장", days=3), tab="ipo"),
     dict(id="gn_ipo_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IPO", kind="gnews",
          url=gn("IPO OR 상장 OR 프리IPO (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ipo"),
@@ -98,6 +105,17 @@ FEEDS = [
     dict(id="gn_ecm2", label="Google 뉴스 · 블록딜/지분매각", kind="gnews", url=gn("블록딜 OR 시간외 대량매매 OR 지분 매각 OR 오버행", days=3), tab="ib", sub="ecm"),
     dict(id="gn_mna", label="Google 뉴스 · M&A", kind="gnews", url=gn("인수합병 OR 경영권 매각 OR 우선협상대상자 OR 지분 인수 OR 사모펀드 인수", days=3), tab="ib", sub="mna"),
     dict(id="gn_mna2", label="Google 뉴스 · 매각/인수전", kind="gnews", url=gn("매각 추진 OR 인수전 OR 본입찰 OR 예비입찰 OR M&A 시장", days=3), tab="ib", sub="mna"),
+    dict(id="gn_ib_league", label="Google 뉴스 · IB 리그테이블", kind="gnews", url=gn("리그테이블 M&A OR 유상증자 리그테이블 OR 회사채 리그테이블 OR 인수금융 리그테이블 OR M&A 자문 순위", days=10), tab="ib", max_age_h=240),
+    dict(id="gn_ib_league_sp", label="더벨/딜사이트 · IB 리그테이블", kind="gnews", url=gn("리그테이블 (site:thebell.co.kr OR site:dealsite.co.kr)", days=14), tab="ib", max_age_h=336),
+    dict(id="gn_ib_dealsite", label="딜사이트 · IB", kind="gnews", url=gn("유상증자 OR 블록딜 OR 인수 OR 매각 OR 메자닌 site:dealsite.co.kr", days=3), tab="ib"),
+    dict(id="gn_ib_thebell2", label="더벨 · IB", kind="gnews", url=gn("유상증자 OR 블록딜 OR 인수 OR 매각 OR 메자닌 site:thebell.co.kr", days=3), tab="ib"),
+    # ── 비상장 투자 (스타트업·바이오 투자유치) ──
+    dict(id="gn_fund_series", label="Google 뉴스 · 시리즈 투자유치", kind="gnews", url=gn("시리즈A OR 시리즈B OR 시리즈C OR 시리즈D OR 프리A 투자 유치", days=3), tab="funding"),
+    dict(id="gn_fund_vc", label="Google 뉴스 · VC 투자", kind="gnews", url=gn("투자 유치 스타트업 OR 벤처캐피탈 투자 OR 누적 투자금 OR 기업가치 인정 OR 브릿지 투자", days=3), tab="funding"),
+    dict(id="gn_fund_bio", label="Google 뉴스 · 바이오 투자유치", kind="gnews", url=gn("바이오 투자 유치 OR 바이오 시리즈 OR 신약 개발사 투자 유치", days=3), tab="funding"),
+    dict(id="gn_fund_sp", label="더벨/딜사이트 · 투자유치", kind="gnews", url=gn("투자 유치 OR 시리즈 OR 펀딩 (site:thebell.co.kr OR site:dealsite.co.kr)", days=3), tab="funding"),
+    dict(id="gn_fund_biosp", label="바이오스펙테이터 · 투자유치", kind="gnews", url=gn("투자 유치 OR 시리즈 OR 펀딩 site:biospectator.com", days=7), tab="funding", max_age_h=168),
+    dict(id="gn_fund_platum", label="플래텀/벤처스퀘어 · 투자유치", kind="gnews", url=gn("투자 유치 (site:platum.kr OR site:venturesquare.net)", days=3), tab="funding"),
     dict(id="gn_ib_thebell", label="Google 뉴스 · 더벨/딜사이트/인베스트조선 IB", kind="gnews",
          url=gn("유상증자 OR 블록딜 OR 전환사채 OR M&A OR 경영권 OR 인수 (site:thebell.co.kr OR site:dealsite.co.kr OR site:investchosun.com)", days=3), tab="ib"),
     dict(id="gn_ib_en", label="Google News · M&A/Offerings", kind="gnews", url=gn_en("acquisition deal billion OR merger agreement OR share offering OR block trade", days=3), tab="ib", lang="en"),
@@ -183,6 +201,8 @@ EXCLUDE_PATTERNS = [
 ]
 
 TAB_RULES = {
+    "funding": ["투자 유치", "투자유치", "시리즈", "펀딩", "스타트업", "벤처", "VC", "기업가치", "누적 투자", "바이오",
+                "funding", "raises", "startup"],
     "ipo": ["IPO", "프리IPO", "상장", "주관사", "몸값", "기업가치", "구주매출", "투자 유치", "엑시트", "기술특례", "스팩",
             "예비심사", "상장심사", "listing", "pre-IPO"],
     "ib": ["유상증자", "블록딜", "전환사채", "교환사채", "메자닌", "M&A", "인수합병", "경영권", "매각", "사모펀드", "PEF",
@@ -214,13 +234,20 @@ IPO_ISSUE_WORDS = ["철회", "연기", "논란", "흥행 실패", "미달", "부
                    "정정 요구", "제동", "금감원"]
 # IPO 이슈 우선순위 가점
 IPO_PRIORITY = {
-    "상장 전 투자유치": ["프리IPO", "pre-IPO", "시리즈C", "시리즈D", "시리즈E", "투자 유치", "투자유치", "브릿지", "기업가치", "valuation", "funding"],
+    "상장 전 투자유치": ["프리IPO", "pre-IPO", "상장 전 투자", "IPO 앞두고", "기업가치", "valuation"],
+    "리그테이블": ["리그테이블", "주관 순위", "주관 실적", "league table"],
     "주관사": ["주관사 선정", "대표주관", "주관 경쟁", "주관사 교체", "주관 실적", "리그테이블"],
     "상장 추진·연기": ["상장 추진", "상장 연기", "상장 철회", "재도전", "재추진", "이중상장", "나스닥 상장", "해외 상장", "plans IPO", "delays IPO"],
     "몸값·엑시트": ["몸값", "구주매출", "엑시트", "투자금 회수", "밸류에이션", "기업가치"],
     "제도 변화": ["제도", "개편", "개선", "요건", "의무보유", "상장심사", "금융당국", "거래소"],
 }
-IB_SPECIALIST_OUTLETS = ["더벨", "딜사이트", "인베스트조선"]
+IB_SPECIALIST_OUTLETS = ["더벨", "딜사이트", "인베스트조선", "바이오스펙테이터"]
+TOP_SPECIALISTS = ["더벨", "딜사이트"]          # IPO·IB·비상장 투자 탭 최우선 매체
+LEAGUE_WORDS = ["리그테이블", "주관 순위", "주관 실적", "자문 순위", "league table"]
+# 비상장 투자 탭
+FUNDING_WORDS = ["시리즈A", "시리즈B", "시리즈C", "시리즈D", "시리즈E", "프리A", "프리 A", "시드 투자", "시드투자", "투자 유치",
+                 "투자유치", "브릿지 투자", "누적 투자", "벤처캐피탈", "VC", "펀딩", "기업가치 인정", "Series A", "Series B",
+                 "Series C", "raises", "funding round"]
 # IPO 탭 국내/해외 구분 (해외 이슈는 최대 10%)
 IPO_FOREIGN_MARKERS = ["오픈AI", "OpenAI", "앤트로픽", "Anthropic", "스페이스X", "SpaceX", "월가", "뉴욕증시", "홍콩",
                        "중국", "일본", "인도", "필리핀", "유럽", "런던", "글로벌 IPO", "美 IPO", "미국 IPO 시장", "Arm", "엔비디아"]

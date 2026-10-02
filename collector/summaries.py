@@ -176,7 +176,7 @@ def enrich(tabs, http_get, cache, policy=None, log=print, outlet_weight=lambda o
     """요약이 부족한 이슈를 원문 앞부분으로 보강 (모든 탭·정책 발표).
     cache: {원문링크: [시각, 요약], 'url:'+구글링크: [시각, 원문주소]}"""
     targets = []
-    for tab in ("ipo", "ib", "economy", "stocks", "realestate"):
+    for tab in ("ipo", "ib", "funding", "economy", "stocks", "realestate"):
         targets += [("issue", iss) for iss in tabs.get(tab, {}).get("issues", [])[:ENRICH_TOP]]
     targets += [("policy", p) for p in (policy or [])[:20]]
 

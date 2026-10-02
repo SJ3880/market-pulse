@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sources as S  # noqa: E402
 import extras as X  # noqa: E402
 import alerts as A  # noqa: E402
+import feedback as FB  # noqa: E402
 import summaries as SM  # noqa: E402
 
 SUM_CACHE = {}  # 원문 요약 저장분 {링크: [시각, 요약]}
@@ -41,9 +42,9 @@ KST = dt.timezone(dt.timedelta(hours=9))
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 MAX_AGE_H = 72           # 수집 단계에서 이보다 오래된 기사는 버림
-TAB_MAX_AGE_H = {"ipo": 72, "ib": 72}   # 그 외 탭은 36시간
-TAB_LIMIT = {"ipo": 20, "ib": 20}       # 탭별 최대 이슈 수 (그 외 TOP_N)
-TAB_HALF_LIFE = {"ipo": 14, "ib": 14}   # 최신성 감소 속도(시간) — IPO·IB 는 천천히
+TAB_MAX_AGE_H = {"ipo": 72, "ib": 72, "funding": 72}   # 그 외 탭은 36시간 (리그테이블 등 피드별 예외 허용)
+TAB_LIMIT = {"ipo": 20, "ib": 20, "funding": 20}       # 탭별 최대 이슈 수 (그 외 TOP_N)
+TAB_HALF_LIFE = {"ipo": 14, "ib": 14, "funding": 16}   # 최신성 감소 속도(시간) — 딜 탭은 천천히
 TOP_N = 30               # 탭별 이슈 개수
 FIXTURE_DIR = os.environ.get("FIXTURE_DIR")  # 테스트용: 실제 인터넷 대신 파일에서 읽기
 
@@ -269,7 +270,7 @@ def items_from_feed(feed, raw, now):
             continue  # 화이트리스트 밖 매체 제외
         title = clean_title(title)
         ts = e["pub"] or now
-        if now - ts > MAX_AGE_H * 3600 or ts - now > 3600:
+        if now - ts > feed.get("max_age_h", MAX_AGE_H) * 3600 or ts - now > 3600:
             continue
         if excluded(title) or is_noise(title) or not re.match(r"https?://", e["link"]):
             continue
@@ -287,6 +288,7 @@ def items_from_feed(feed, raw, now):
                 group = hashlib.md5(e["link"].encode()).hexdigest()[:10]
         summary = "" if feed["kind"] == "gnews" else e["desc"][:700]
         base = dict(feed=feed["id"], tab=feed.get("tab"), sub=feed.get("sub"), lang=feed.get("lang", "ko"),
+                    max_age_h=feed.get("max_age_h"),
                     official=feed.get("official", False), top=feed.get("top", False), group=group)
         if feed.get("official_name"):  # 발표 기관명으로 표시하고, 보도 매체는 요약란에
             summary = f"{outlet} 보도"
@@ -342,8 +344,13 @@ def classify(item):
     # IPO 단어 → IPO 탭, 유증·블록딜·메자닌·M&A 단어 → IB 탭 (어느 피드에서 왔든)
     is_ipo = contains_any(t, S.IPO_WORDS) > 0
     ib_sub = next((k for k in ("ecm", "mna") if contains_any(t, S.IB_SUB_WORDS[k])), None)
-    if item.get("tab") == "ipo" or (is_ipo and tab in ("stocks", "economy", "ib", None)):
+    if item.get("tab") == "ipo" or (is_ipo and tab in ("stocks", "economy", "ib", "funding", None)):
         return "ipo", None
+    is_funding = contains_any(t, S.FUNDING_WORDS) > 0
+    if item.get("tab") == "funding" or (is_funding and tab in ("stocks", "economy", "ib", None)):
+        return ("funding", None) if is_funding or item.get("tab") == "funding" else (tab, None)
+    if tab == "funding":
+        tab = "economy"
     if item.get("tab") == "ib":
         return "ib", ib_sub or item.get("sub")
     if ib_sub and tab in ("stocks", "economy", None):
@@ -531,6 +538,50 @@ def _has_any(text, words):
     return any(_has(w, tl) for w in words)  # 영문은 단어 경계로 ('SPAC' 이 'space' 에 걸리지 않게)
 
 
+def specialist_boost(i):
+    """더벨·딜사이트 보도면 최우선(×1.6), 인베스트조선·바이오스펙테이터는 ×1.25. 대표 기사도 전문매체 기사로."""
+    top = [a for a in i["articles"] if a["outlet"] in S.TOP_SPECIALISTS]
+    other = [a for a in i["articles"] if a["outlet"] in S.IB_SPECIALIST_OUTLETS]
+    pick = (top or other or [None])[0]
+    if not pick:
+        return False
+    i["score"] = round(i["score"] * (1.6 if top else 1.25), 3)
+    i["reasons"].append(pick["outlet"])
+    if i["outlet"] not in S.IB_SPECIALIST_OUTLETS:  # 제목·링크를 전문매체 기사로
+        i["title"], i["link"], i["outlet"] = pick["title"], pick["link"], pick["outlet"]
+    return True
+
+
+FUNDING_GENERIC = {"투자", "유치", "시리즈", "펀딩", "스타트업", "벤처", "누적", "투자금", "기업가치", "인정", "투자사",
+                   "벤처캐피탈", "vc", "바이오", "프리a", "시드", "브릿지", "신규", "후속", "참여", "주도", "라운드", "ai"}
+
+
+def funding_adjust(issues):
+    """비상장 투자 탭: 투자유치 기사만, 금액 큰 순·전문매체 우선, 같은 회사 중복 접기, 해외는 최대 3개."""
+    out = []
+    for i in issues:
+        text = " ".join(a["title"] for a in i["articles"][:3])
+        if not _has_any(text, S.FUNDING_WORDS + ["투자", "유치", "raise"]):
+            continue
+        if _is_big(text) or re.search(r"\d{3,}\s?억", text):
+            i["score"] = round(i["score"] * 1.25, 3)
+            i["reasons"].append("대규모 투자")
+        m = re.search(r"시리즈\s?([A-E])", text)
+        if m:
+            i["reasons"].append(f"시리즈{m.group(1)}")
+            if m.group(1) in "CDE":
+                i["score"] = round(i["score"] * 1.1, 3)
+        if not specialist_boost(i) and i["count"] < 2:
+            i["score"] = round(i["score"] * 0.8, 3)
+        out.append(i)
+    out.sort(key=lambda x: -x["score"])
+    out = fold_duplicates(out, S.IPO_GENERIC_TOKENS | FUNDING_GENERIC)
+    dom, frn = [], []
+    for i in out:
+        (frn if is_foreign_ipo(i) else dom).append(i)
+    return sorted(dom + frn[:3], key=lambda x: -x["score"])
+
+
 def ipo_adjust(issues):
     """IPO 탭: 수요예측·청약·신고서 같은 일정성 기사는 빼고(논란·철회·제도 등 이슈성 예외),
     상장 전 대규모 펀딩·주관사·상장 추진/연기·몸값·제도 변화를 위로. IB 전문매체(더벨 등) 보도는 가점."""
@@ -539,7 +590,7 @@ def ipo_adjust(issues):
         text = " ".join(a["title"] for a in i["articles"][:3])
         if _has_any(text, S.IPO_ROUTINE_WORDS) and not _has_any(text, S.IPO_ISSUE_WORDS):
             continue
-        ipo_terms = S.IPO_WORDS + [w for ws in S.IPO_PRIORITY.values() for w in ws] + ["상장", "listing", "go public"]
+        ipo_terms = S.IPO_WORDS + [w for ws in S.IPO_PRIORITY.values() for w in ws] + ["상장", "listing", "go public"] + S.LEAGUE_WORDS
         if not _has_any(text, ipo_terms):
             continue  # IPO 와 무관한 기사(물가·회사채 등) 제외
         if _has_any(text, S.IB_SUB_WORDS["ecm"]) and not _has_any(text, ["IPO", "상장", "프리IPO"]):
@@ -551,10 +602,7 @@ def ipo_adjust(issues):
         if _is_big(text):
             i["score"] = round(i["score"] * 1.15, 3)
             i["reasons"].append("대규모")
-        if any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
-            i["score"] = round(i["score"] * 1.1, 3)
-            i["reasons"].append("IB 전문매체")
-        elif i["count"] < 2 and not tags:
+        if not specialist_boost(i) and i["count"] < 2 and not tags:
             i["score"] = round(i["score"] * 0.7, 3)  # 일반매체 단독·유형 없는 기사는 아래로
         out.append(i)
     out.sort(key=lambda x: -x["score"])
@@ -586,7 +634,7 @@ def _entity_tokens(title, generic):
     return {ENTITY_ALIASES.get(w, w) for w in tokens(t) if len(w) >= 2 and w not in generic}
 
 
-TAB_ORDER = ("economy", "stocks", "realestate", "ipo", "ib")
+TAB_ORDER = ("economy", "stocks", "realestate", "ipo", "ib", "funding")
 # 경제·주식·부동산에서 '같은 이슈' 판단 때 무시하는 흔한 단어
 GENERAL_GENERIC = set("""환율 금리 기준금리 물가 코스피 코스닥 증시 외국인 기관 개인 순매수 순매도 아파트 서울 집값 전세 월세 매매
 부동산 미국 연준 한국 정부 한은 대출 가계 수출 반도체 주가 지수 상승 하락 급등 급락 마감 출발 시장 투자자 정책 규제
@@ -598,7 +646,8 @@ def same_story(a, b):
     """두 이슈가 같은 사건인지 (제목 유사도 또는 고유 단어 2개 이상 공유)."""
     ta = {"title": a["title"], "bg": bigrams(a["title"]), "tk": set(tokens(a["title"], keep_num=True))}
     tb = {"title": b["title"], "bg": bigrams(b["title"]), "tk": set(tokens(b["title"], keep_num=True))}
-    if similar(ta, tb):
+    ja = len(ta["bg"] & tb["bg"]) / max(1, len(ta["bg"] | tb["bg"]))
+    if ja >= 0.5 and not opposite(a["title"], b["title"]):
         return True
     ea = _entity_tokens(a["title"], S.IPO_GENERIC_TOKENS | GENERAL_GENERIC)
     eb = _entity_tokens(b["title"], S.IPO_GENERIC_TOKENS | GENERAL_GENERIC)
@@ -647,7 +696,8 @@ def ib_adjust(issues):
         text = " ".join(a["title"] for a in i["articles"][:3])
         if _has_any(text, S.IB_NOISE_WORDS):
             continue
-        deal_words = S.IB_SUB_WORDS["ecm"] + S.IB_SUB_WORDS["mna"] + ["인수", "매각", "자본확충", "자본조달", "지분", "증자"]
+        deal_words = (S.IB_SUB_WORDS["ecm"] + S.IB_SUB_WORDS["mna"] + S.LEAGUE_WORDS
+                      + ["인수", "매각", "자본확충", "자본조달", "지분", "증자", "인수금융"])
         if not (_has_any(text, deal_words) or BIG_AMOUNT_RE.search(text)):
             continue
         kept.append(i)
@@ -657,10 +707,10 @@ def ib_adjust(issues):
         if _is_big(text):
             i["score"] = round(i["score"] * 1.25, 3)
             i["reasons"].append("대형 딜")
-        if any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
-            i["score"] = round(i["score"] * 1.1, 3)
-            i["reasons"].append("IB 전문매체")
-        if i["count"] < 2 and not any(o in S.IB_SPECIALIST_OUTLETS for o in i["outlets"]):
+        if _has_any(text, S.LEAGUE_WORDS):
+            i["score"] = round(i["score"] * 1.3, 3)
+            i["reasons"].append("리그테이블")
+        if not specialist_boost(i) and i["count"] < 2:
             i["score"] = round(i["score"] * 0.55, 3)  # 일반매체 단독 보도는 아래로
     issues.sort(key=lambda x: -x["score"])
     return fold_duplicates(issues, S.IPO_GENERIC_TOKENS | {"인수", "매각", "유상증자", "블록딜", "지분", "경영권", "m&a",
@@ -752,6 +802,19 @@ def build_snapshot(prev_snapshot=None):
     items, status = fetch_all_feeds(now)
     markets = fetch_markets()
     extras = X.collect_extras(http_get, fetch_quote)
+    # 코스피·코스닥: 네이버 실시간 값으로 덮어쓰기 (Yahoo 지연 보완)
+    rt = (extras.get("realtime") or {}).get("quotes") or {}
+    for m in markets:
+        q = rt.get(m["sym"])
+        if q and q.get("price"):
+            m["price"] = q["price"]
+            if q.get("change") is not None:
+                m["change"] = q["change"]
+                m["prev"] = round(q["price"] - q["change"], 4)
+            if q.get("pct") is not None:
+                m["pct"] = q["pct"]
+            m["spark"] = (m.get("spark") or [])[-60:] + [q["price"]]
+            m["src"] = "naver"
     # 미 국채 10년: Yahoo 단위(×10 여부)를 FRED 공식값과 비교해 보정
     f10 = extras.get("fred10") or {}
     for m in markets:
@@ -787,7 +850,7 @@ def build_snapshot(prev_snapshot=None):
             official.append(it)
             continue
         tab, sub = classify(it)
-        if tab and now - it["ts"] > TAB_MAX_AGE_H.get(tab, 36) * 3600:
+        if tab and now - it["ts"] > max(TAB_MAX_AGE_H.get(tab, 36), it.get("max_age_h") or 0) * 3600:
             continue  # 경제·주식·부동산은 36시간, IPO·IB 는 72시간까지
         if tab:
             it["_sub"] = sub
@@ -806,14 +869,17 @@ def build_snapshot(prev_snapshot=None):
             issues = ib_adjust(issues)
         elif tab == "ipo":
             issues = ipo_adjust(issues)
+        elif tab == "funding":
+            issues = funding_adjust(issues)
         issues.sort(key=lambda x: -x["score"])
         # 같은 회사·같은 사건 반복 기사 접기 (탭 안)
-        issues = fold_duplicates(issues, S.IPO_GENERIC_TOKENS | GENERAL_GENERIC, strict=tab not in ("ipo", "ib"))
+        issues = fold_duplicates(issues, S.IPO_GENERIC_TOKENS | GENERAL_GENERIC | FUNDING_GENERIC,
+                                 strict=tab not in ("ipo", "ib", "funding"))
         ranked[tab] = issues
 
     # 탭 사이 중복: 더 구체적인 탭(IPO > IB > 부동산 > 주식 > 경제)에만 남김
     taken = []
-    for tab in ("ipo", "ib", "realestate", "stocks", "economy"):
+    for tab in ("ipo", "ib", "funding", "realestate", "stocks", "economy"):
         keep = []
         for iss in ranked[tab]:
             if any(same_story(iss, o) for o in taken):
@@ -970,7 +1036,7 @@ def update_timeline(store, snap):
     if day["slots"] and day["slots"][-1]["t"] == slot:
         return False
     entry = {"t": slot, "tabs": {}}
-    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
+    for tab in ("economy", "stocks", "realestate", "ipo", "ib", "funding"):
         entry["tabs"][tab] = [dict(title=i["title"], link=i["link"], outlet=i["outlet"], count=i["count"])
                               for i in snap["tabs"].get(tab, {}).get("issues", [])[:3]]
     q = {m["sym"]: m for m in snap["markets"]}
@@ -1002,8 +1068,11 @@ def save_state(store, name, data):
 
 
 def interval_now():
-    h = dt.datetime.now(KST).hour
-    return 60 if 6 <= h < 24 else 300  # 심야(0~6시)는 5분 간격
+    n = dt.datetime.now(KST)
+    m = n.hour * 60 + n.minute
+    if n.weekday() < 5 and 9 * 60 - 5 <= m <= 15 * 60 + 40:
+        return 30   # 국내 장중은 30초 간격
+    return 60 if 6 <= n.hour < 24 else 300  # 심야(0~6시)는 5분 간격
 
 
 def main():
@@ -1033,6 +1102,13 @@ def main():
             except Exception as ex:  # noqa: BLE001
                 astatus = {"enabled": False, "error": f"알림 처리 오류: {type(ex).__name__}"}
             snap["alerts"] = astatus
+            try:  # 사이트 불편사항 → 텔레그램
+                fstate, fstatus = FB.process(load_state(store, "feedback.json"), log)
+                save_state(store, "feedback.json", fstate)
+                if fstatus.get("error"):
+                    log(f"   ✗ 불편사항: {fstatus['error']}")
+            except Exception as ex:  # noqa: BLE001
+                log("불편사항 처리 오류:", repr(ex))
             save_state(store, "summaries.json", SUM_CACHE)
             try:
                 update_timeline(store, snap)

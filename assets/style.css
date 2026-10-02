@@ -350,3 +350,35 @@ body.qv-open { overflow: hidden; }
 @media (max-width: 960px) { .brief-top { grid-template-columns: minmax(0, 1fr); } .brief-top .pick { grid-column: auto !important; } }
 .tl-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .tl-col { border-left: 0; border-top: 1px solid var(--line); }
+
+/* 6개 분야 브리핑 카드: 한 줄에 3개 */
+.brief-top .pick:nth-child(n) { grid-column: span 2; }
+@media (max-width: 960px) { .brief-top .pick:nth-child(n) { grid-column: auto; } }
+
+/* 불편사항 버튼·양식 */
+.fb-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--brand); background: var(--brand); color: var(--brand-ink); font-size: 13.5px; font-weight: 700; }
+.fb-btn:hover { filter: brightness(1.1); }
+.fb-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 600px) { .fb-btn span { display: none; } .fb-btn { padding: 0 9px; } }
+.fb-frame { width: 100%; height: min(70vh, 760px); border: 1px solid var(--line); border-radius: 10px; background: #fff; margin: 12px 0 8px; }
+
+.fb-form { display: grid; gap: 8px; margin-top: 14px; }
+.fb-form label { font-size: 13.5px; font-weight: 700; color: var(--ink-2); }
+.fb-form label small { font-weight: 500; color: var(--muted); }
+.fb-form textarea, .fb-form input { font: inherit; font-size: 15px; color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical; }
+.fb-form textarea:focus, .fb-form input:focus { outline: 2px solid var(--focus); outline-offset: 0; border-color: transparent; }
+.fb-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.fb-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.fb-send { border: 0; border-radius: 9px; padding: 10px 22px; font-weight: 700; font-size: 15px; cursor: pointer;
+  background: var(--brand); color: var(--brand-ink); }
+.fb-send:disabled { opacity: .45; cursor: not-allowed; }
+.fb-done { padding: 18px 16px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); }
+.fb-done b { font-size: 16px; }
+@media (max-width: 600px) {
+  .top-inner { gap: 8px; }
+  .status { min-width: 0; flex: 1; justify-content: flex-end; }
+  .status #statusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .top-actions { flex: none; }
+}

@@ -13,7 +13,7 @@ import time
 import urllib.parse
 import urllib.request
 
-TAB_NAMES = {"economy": "경제", "stocks": "주식", "realestate": "부동산", "ipo": "IPO", "ib": "IB", "policy": "정책·발표"}
+TAB_NAMES = {"economy": "경제", "stocks": "주식", "realestate": "부동산", "ipo": "IPO", "ib": "IB", "funding": "비상장 투자", "policy": "정책·발표"}
 KEEP_SEC = 7 * 24 * 3600  # 같은 이슈는 7일간 다시 안 보냄
 TOP_N = 15  # 탭별 상위 몇 위까지 볼지
 
@@ -73,7 +73,7 @@ def process(snap, state, repo_dir, log=print):
     first_time = not state.get("initialized")
 
     cands = []
-    for tab in ("economy", "stocks", "realestate", "ipo", "ib"):
+    for tab in ("economy", "stocks", "realestate", "ipo", "ib", "funding"):
         for iss in snap["tabs"].get(tab, {}).get("issues", [])[:TOP_N]:
             cands.append((tab, iss))
     for p in snap.get("policy", [])[:20]:
