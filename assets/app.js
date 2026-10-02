@@ -755,12 +755,10 @@
     const ready = cfg.form && cfg.field;
     $("#qvBody").innerHTML = `
       <h2 id="qvTitle">불편사항·의견 보내기</h2>
-      <p class="hint">불편했던 점, 있었으면 하는 기능을 편하게 적어 주세요. 보내신 내용은 사이트 관리자에게만 전달되고 다른 이용자에게는 보이지 않아요.</p>
+      <p class="hint">불편했던 점, 있었으면 하는 기능을 편하게 적어 주세요. <b>익명으로 접수돼요</b> — 이름·이메일·로그인 정보는 받지 않고, 내용은 사이트 관리자에게만 전달돼요.</p>
       <form id="fbForm" class="fb-form" novalidate>
         <label for="fbText">내용</label>
         <textarea id="fbText" rows="7" maxlength="2000" placeholder="예) IPO 탭에 해외 기사가 너무 많아요 / 모바일에서 글자가 작아요" required></textarea>
-        <label for="fbContact">답변 받을 연락처 <small>(선택)</small></label>
-        <input id="fbContact" type="text" maxlength="100" placeholder="이메일이나 카톡 아이디 — 비워 둬도 돼요">
         <input id="fbHp" type="text" tabindex="-1" autocomplete="off" class="fb-hp" aria-hidden="true">
         <div class="fb-row">
           <span class="hint" id="fbMsg">${ready ? "" : "관리자가 아직 접수함을 연결하지 않았어요."}</span>
@@ -783,8 +781,6 @@
       const where = `[${TABS[S.tab] || S.tab} 탭 · ${innerWidth < 600 ? "모바일" : "PC"} · ${new Date().toLocaleString("ko-KR")}]`;
       const body = new URLSearchParams();
       body.append(cfg.field, `${text}\n\n${where}`);
-      if (cfg.contactField) body.append(cfg.contactField, $("#fbContact").value.trim());
-      else if ($("#fbContact").value.trim()) body.set(cfg.field, `${text}\n\n연락처: ${$("#fbContact").value.trim()}\n${where}`);
       btn.disabled = true; msg.textContent = "보내는 중…";
       try {
         await fetch(cfg.form, { method: "POST", mode: "no-cors", body });   // 구글 설문은 응답 내용을 돌려주지 않음(no-cors)

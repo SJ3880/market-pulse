@@ -21,9 +21,8 @@
   // window.MP_DATA_BASE = "https://raw.githubusercontent.com/아이디/저장소이름/data/";
   // 불편사항 접수함 연결 (README '불편사항 접수' 참고) — form: 구글 설문 주소(끝을 formResponse 로), field: 내용 칸 번호
   window.MP_FEEDBACK = {
-    form: "",          // 예) "https://docs.google.com/forms/d/e/1FAIpQ.../formResponse"
-    field: "",         // 예) "entry.123456789"
-    contactField: ""   // (선택) 연락처 칸 번호. 없으면 비워 두기
+    form: "https://docs.google.com/forms/d/e/1FAIpQLSeJW_9EpZLBJ2IWm0516Vs2NRW3IMdWH0hchKZ2oCL2XjmXPg/formResponse",
+    field: "entry.1045158273"   // '내용' 칸 (익명 접수 — 연락처 칸 없음)
   };
   try { const t = localStorage.getItem("mp-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
