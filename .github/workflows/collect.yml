@@ -28,4 +28,5 @@ jobs:
           REB_KEY: ${{ secrets.REB_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FEEDBACK_CSV_URL: ${{ secrets.FEEDBACK_CSV_URL }}
         run: python collector/collect.py --loop-minutes 55
