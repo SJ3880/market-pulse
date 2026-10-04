@@ -163,15 +163,16 @@
 
   const quote = (sym) => S.snap?.markets.find((m) => m.sym === sym);
 
+  const OPTIONAL_SYMS = new Set(["2YY=F"]);   // 못 받으면 칸 자체를 숨김
   function renderBoard() {
     const el = $("#board");
-    el.innerHTML = S.snap.markets.map((m) => {
+    el.innerHTML = S.snap.markets.filter((m) => !(OPTIONAL_SYMS.has(m.sym) && m.price == null)).map((m) => {
       if (m.error || m.price == null) return `<div class="tick err"><span class="n">${esc(m.name)}</span><span class="p">수신 대기</span></div>`;
       const st = marketState(m.group);
       return `<div class="tick" title="${esc(m.name)} 전일 ${fmt(m.prev, m.digits)}">
         <span class="n">${esc(m.name)}${st ? `<span class="badge">${st}</span>` : ""}</span>
-        <span class="p num">${fmt(m.price, m.digits)}</span>
-        <span class="c num ${dir(m.change)}">${pct(m.pct)}</span>
+        <span class="p num">${fmt(m.price, m.digits)}${m.unit === "%" ? "%" : ""}</span>
+        <span class="c num ${dir(m.change)}">${m.unit === "%" ? bp(m.change) : pct(m.pct)}</span>
         ${spark(m.spark, m.prev)}
       </div>`;
     }).join("") + rateTiles();
@@ -343,8 +344,8 @@
 
   function briefingHTML() {
     const tabs = NEWS_TABS;
-    const line = ["^KS11", "^KQ11", "KRW=X", "^GSPC", "^IXIC", "^TNX"].map(quote).filter((m) => m && m.price != null)
-      .map((m) => `<span><strong>${esc(m.name)}</strong><span class="num">${fmt(m.price, m.digits)}</span> <span class="num ${dir(m.change)}">${pct(m.pct)}</span></span>`).join("")
+    const line = ["^KS11", "^KQ11", "KRW=X", "^TNX", "^GSPC", "^IXIC"].map(quote).filter((m) => m && m.price != null)
+      .map((m) => `<span><strong>${esc(m.name)}</strong><span class="num">${fmt(m.price, m.digits)}${m.unit === "%" ? "%" : ""}</span> <span class="num ${dir(m.change)}">${m.unit === "%" ? bp(m.change) : pct(m.pct)}</span></span>`).join("")
       + (XT().flow?.markets?.KOSPI ? `<span><strong>외국인(코스피)</strong><span class="num ${dir(XT().flow.markets.KOSPI.foreign)}">${eok(XT().flow.markets.KOSPI.foreign)}</span></span>` : "");
     const picks = tabs.map((t) => {
       const is = S.snap.tabs[t]?.issues || [];
