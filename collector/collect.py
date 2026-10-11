@@ -225,8 +225,20 @@ def clean_title(title):
 NOISE_RE = re.compile("|".join(S.NOISE_WORDS))
 
 
+OFF_HARD_RE = re.compile("|".join(S.OFFTOPIC_HARD), re.I)
+OFF_SOFT_RE = re.compile("|".join(map(re.escape, S.OFFTOPIC_SOFT)))
+FIN_ANCHOR_RE = re.compile("|".join(map(re.escape, S.FIN_ANCHOR)))
+
+
+def off_topic(title):
+    """스포츠·사건사고 등 주제와 무관한 기사인지. 정치·수사 기사는 금융·기업과 연결될 때만 통과."""
+    if OFF_HARD_RE.search(title):
+        return True
+    return bool(OFF_SOFT_RE.search(title)) and not FIN_ANCHOR_RE.search(title)
+
+
 def is_noise(title):
-    return bool(NOISE_RE.search(title))
+    return bool(NOISE_RE.search(title)) or off_topic(title)
 
 
 RELEVANT_ALL = list(dict.fromkeys(S.RELEVANT_WORDS + S.IMPACT_KEYWORDS + [w for ws in S.TAB_RULES.values() for w in ws]))
@@ -330,6 +342,19 @@ def contains_any(text, words):
     return sum(1 for w in words if w.lower() in tl)
 
 
+CRYPTO_RE = re.compile("|".join("리플(?![렉릭])" if w == "리플" else re.escape(w) for w in S.CRYPTO_WORDS), re.I)
+
+
+def topical(text, tab):
+    """IPO·IB·비상장 투자·크립토·부동산 탭은 그 분야 단어가 제목에 꼭 있어야 함."""
+    if tab == "crypto":
+        return bool(CRYPTO_RE.search(text)) or contains_any(text, ["코인", "블록체인", "토큰", "BTC", "ETH", "XRP"]) > 0
+    if tab not in ("ipo", "ib", "funding", "realestate"):
+        return True
+    words = S.TAB_RULES[tab] + (S.IPO_WORDS if tab == "ipo" else S.FUNDING_WORDS + ["유치", "자금 조달"] if tab == "funding" else [])
+    return any(_has(w, text.lower()) for w in words)
+
+
 def classify(item):
     t = item["title"] + " " + item.get("summary", "")[:80]
     scores = {tab: contains_any(t, words) for tab, words in S.TAB_RULES.items()}
@@ -346,9 +371,11 @@ def classify(item):
     # IPO 단어 → IPO 탭, 유증·블록딜·메자닌·M&A 단어 → IB 탭 (어느 피드에서 왔든)
     is_ipo = contains_any(t, S.IPO_WORDS) > 0
     ib_sub = next((k for k in ("ecm", "mna") if contains_any(t, S.IB_SUB_WORDS[k])), None)
+    is_crypto = bool(CRYPTO_RE.search(item["title"]))
+    if item.get("tab") == "ipo" and is_crypto and not is_ipo:
+        return "crypto", None
     if item.get("tab") == "ipo" or (is_ipo and tab in ("stocks", "economy", "ib", "funding", None)):
         return "ipo", None
-    is_crypto = contains_any(item["title"], S.CRYPTO_WORDS) > 0
     if item.get("tab") == "crypto" or (is_crypto and tab in ("stocks", "economy", "crypto", "ib", None)):
         return "crypto", None
     if tab == "crypto":
@@ -872,7 +899,8 @@ def build_snapshot(prev_snapshot=None):
         issues = [score_cluster(c, now, TAB_HALF_LIFE.get(tab, 6)) for c in cl]
         # 시장 관련성 확인: 단독 보도는 관련 단어 2개 이상, 다수 보도는 1개 이상
         issues = [i for i in issues if not is_noise(i["title"]) and
-                  relevance(" ".join(a["title"] for a in i["articles"][:3]), tab) >= (1 if i["count"] >= 2 else 2)]
+                  relevance(" ".join(a["title"] for a in i["articles"][:3]), tab) >= (1 if i["count"] >= 2 else 2) and
+                  topical(" ".join(a["title"] for a in i["articles"][:3]), tab)]
         if tab == "ib":
             issues = ib_adjust(issues)
         elif tab == "ipo":
