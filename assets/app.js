@@ -334,6 +334,7 @@
         <ol class="issues">${list}</ol>
       </section>
       <aside class="side">
+        ${t === "stocks" ? `<div class="panel"><h2 class="sec">주식시장 공포·탐욕 지수 <small>CNN · 미국 증시</small></h2>${stockFngHTML()}</div>` : ""}
         <div class="panel"><h2 class="sec">많이 언급되는 키워드 <small>상위 이슈 기준</small></h2>${kwHTML(data.keywords)}</div>
         ${t !== "stocks" ? `<div class="panel"><h2 class="sec">국내 금리 <small>한국은행</small></h2>${ratesPanel()}</div>` : ""}
         <div class="panel"><h2 class="sec">관련 지표</h2>${miniHTML(SIDE_MARKETS[t])}</div>
@@ -369,6 +370,7 @@
           <ol class="issues">${all.map((iss, i) => issueHTML(iss, i, { tabLabel: TABS[iss._tab] })).join("")}</ol>
         </section>
         <aside class="side">
+          <div class="panel"><h2 class="sec">주식 공포·탐욕 지수 <small>CNN · 미국 증시</small></h2>${stockFngHTML(false)}</div>
           <div class="panel"><h2 class="sec">새로 떠오르는 이슈 <small>최근 2시간</small></h2>${rising.length
             ? `<div class="mini">${rising.map((r) => `<div class="row" style="grid-template-columns:1fr">${qbtn({ ...r, _tabLabel: TABS[r._tab] }, r.title)}</div>`).join("")}</div>`
             : `<p class="hint">최근 2시간 동안 급하게 번진 이슈는 없어요.</p>`}</div>
@@ -419,7 +421,7 @@
         <table>${s.sources.map((x) => `<tr><td class="${x.ok ? "ok" : "bad"}">${x.ok ? "정상" : "실패"}</td><td>${esc(x.label)}</td><td class="num">${x.count}건</td><td>${esc(x.error || "")}</td></tr>`).join("")}</table>
       </details>
       <details><summary>추가 지표·알림 상태</summary>
-        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)", crypto: "코인 시세 (업비트·Yahoo·공포탐욕지수)" }).map(([k, nm]) => {
+        <table>${Object.entries({ rates: "국내 금리 (한국은행 ECOS)", realestate: "부동산 주간 통계 (한국부동산원)", flow: "투자자별 순매수 (네이버 금융)", sectors: "업종 등락 (섹터 ETF·Yahoo)", bigcaps: "대형주 (Yahoo)", crypto: "코인 시세 (업비트·Yahoo·공포탐욕지수)", stock_fng: "주식 공포·탐욕 지수 (CNN)" }).map(([k, nm]) => {
           const v = (s.extras || {})[k] || {};
           const st = v.ok ? "정상" : v.missing_key ? "키 없음" : v.stale ? "지연" : "실패";
           return `<tr><td class="${v.ok ? "ok" : "bad"}">${st}</td><td>${nm}</td><td>${v.fetched_at ? ago(v.fetched_at) : ""}</td><td>${esc(v.error || "")}</td></tr>`;
@@ -513,6 +515,25 @@
     </section>`;
   }
 
+  // ───────── 공포·탐욕 지수 (주식: CNN, 코인: alternative.me) ─────────
+  const fngColor = (v) => v <= 25 ? "var(--down)" : v < 45 ? "color-mix(in srgb, var(--down) 55%, var(--muted))" : v <= 55 ? "var(--muted)" : v < 75 ? "color-mix(in srgb, var(--up) 55%, var(--muted))" : "var(--up)";
+  function fngGauge(f, histNote = true) {
+    return `<div class="fng">
+        <div class="fng-v num" style="color:${fngColor(f.value)}">${f.value}</div>
+        <div><b>${esc(f.label)}</b><div class="fng-bar"><i style="left:${f.value}%"></i></div>
+          <div class="hint fng-sc"><span>극단적 공포</span><span>중립</span><span>극단적 탐욕</span></div></div>
+      </div>${histNote && f.history?.length > 2 ? spark(f.history, 50, 200, 30) + `<p class="hint" style="margin:4px 0 0">최근 30일 흐름 · 점선 = 50(중립)</p>` : ""}`;
+  }
+  function stockFngHTML(full = true) {
+    const f = XT().stock_fng;
+    if (f?.value == null) return `<p class="hint">${f?.error ? "지수를 받지 못했어요. 잠시 뒤 다시 시도해요." : "공포·탐욕 지수를 받는 중이에요."}</p>`;
+    const cmp = [["전일", f.prev_close], ["1주 전", f.week], ["1개월 전", f.month], ["1년 전", f.year]].filter(([, v]) => v != null);
+    const cmpHTML = cmp.length ? `<div class="fng-cmp">${cmp.map(([k, v]) => `<span><small class="hint">${k}</small><b class="num" style="color:${fngColor(v)}">${v}</b></span>`).join("")}</div>` : "";
+    const parts = full && f.parts?.length ? `<details class="fng-parts"><summary>7개 세부 지표 보기</summary><div class="mini">${f.parts.map((p) =>
+      `<div class="row"><span>${esc(p.name)}</span><span class="v num" style="color:${fngColor(p.value)}">${p.value}</span><span class="hint">${esc(p.label)}</span></div>`).join("")}</div></details>` : "";
+    return fngGauge(f, full) + cmpHTML + parts + (f.stale ? `<p class="hint" style="margin:4px 0 0">지연된 값이에요 (${ago(f.fetched_at)} 기준)</p>` : "");
+  }
+
   // ───────── 크립토 시세판 ─────────
   const usdFmt = (v, d = 0) => v == null ? "–" : "$" + fmt(v, d);
   const bigUsd = (v) => v == null ? "–" : v >= 1e12 ? "$" + fmt(v / 1e12, 2) + "조" : "$" + fmt(v / 1e9, 0) + "억";
@@ -529,12 +550,7 @@
       </div>`;
     }).join("");
     const f = c.fng, g = c.global;
-    const fngColor = (v) => v <= 25 ? "var(--down)" : v < 45 ? "color-mix(in srgb, var(--down) 55%, var(--muted))" : v <= 55 ? "var(--muted)" : v < 75 ? "color-mix(in srgb, var(--up) 55%, var(--muted))" : "var(--up)";
-    const fng = f ? `<div class="fng">
-        <div class="fng-v num" style="color:${fngColor(f.value)}">${f.value}</div>
-        <div><b>${esc(f.label)}</b><div class="fng-bar"><i style="left:${f.value}%"></i></div>
-          <div class="hint fng-sc"><span>극단적 공포</span><span>중립</span><span>극단적 탐욕</span></div></div>
-      </div>${f.history?.length > 2 ? spark(f.history, 50, 200, 30) : ""}<p class="hint" style="margin:4px 0 0">최근 30일 흐름 · 점선 = 50(중립)</p>` : `<p class="hint">공포·탐욕 지수를 받는 중이에요.</p>`;
+    const fng = f ? fngGauge(f) : `<p class="hint">공포·탐욕 지수를 받는 중이에요.</p>`;
     const glob = g ? `<div class="mini">
         <div class="row"><span>전체 코인 시가총액</span><span class="v num">${bigUsd(g.mcap_usd)}</span><span class="c num ${dir(g.mcap_pct)}">${pct(g.mcap_pct)}</span></div>
         <div class="row"><span>비트코인 점유율</span><span class="v num">${fmt(g.btc_dom, 1)}%</span><span></span></div>

@@ -534,6 +534,48 @@ def fetch_crypto(http_get, fetch_quote):
     return _cached("crypto", 30, run)
 
 
+
+# ─────────────────────────── 주식시장 공포·탐욕 지수 (CNN Fear & Greed, 미국 증시 기준) ───────────────────────────
+STOCK_FNG_KO = {"extreme fear": "극단적 공포", "fear": "공포", "neutral": "중립", "greed": "탐욕", "extreme greed": "극단적 탐욕"}
+STOCK_FNG_PARTS = [("market_momentum_sp500", "주가 모멘텀"), ("stock_price_strength", "신고가·신저가"),
+                   ("stock_price_breadth", "상승·하락 거래량"), ("put_call_options", "풋·콜 옵션"),
+                   ("market_volatility_vix", "변동성(VIX)"), ("junk_bond_demand", "정크본드 수요"),
+                   ("safe_haven_demand", "안전자산 수요")]
+
+
+def fetch_stock_fng():
+    import gzip
+    import urllib.request
+
+    def run():
+        req = urllib.request.Request(
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            headers={"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                                    "Chrome/130.0 Safari/537.36"),
+                     "Accept": "application/json, text/plain, */*", "Accept-Encoding": "gzip",
+                     "Referer": "https://edition.cnn.com/", "Origin": "https://edition.cnn.com"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            if r.headers.get("Content-Encoding") == "gzip":
+                raw = gzip.decompress(raw)
+        j = json.loads(raw)
+        f = j["fear_and_greed"]
+        lab = lambda r: STOCK_FNG_KO.get(str(r).lower(), str(r))  # noqa: E731
+        hist = [round(p["y"]) for p in (j.get("fear_and_greed_historical", {}).get("data") or [])][-30:]
+        parts = []
+        for k, nm in STOCK_FNG_PARTS:
+            v = j.get(k) or {}
+            if v.get("score") is not None:
+                parts.append(dict(name=nm, value=round(v["score"]), label=lab(v.get("rating", ""))))
+        return dict(value=round(f["score"]), label=lab(f.get("rating", "")),
+                    prev_close=round(f["previous_close"]) if f.get("previous_close") is not None else None,
+                    week=round(f["previous_1_week"]) if f.get("previous_1_week") is not None else None,
+                    month=round(f["previous_1_month"]) if f.get("previous_1_month") is not None else None,
+                    year=round(f["previous_1_year"]) if f.get("previous_1_year") is not None else None,
+                    history=hist, parts=parts, src="CNN Fear & Greed")
+    return _cached("stock_fng", 600, run)
+
+
 def collect_extras(http_get, fetch_quote):
     keys = {"ecos": os.environ.get("ECOS_KEY", "").strip(), "reb": os.environ.get("REB_KEY", "").strip()}
     jobs = {
@@ -544,7 +586,8 @@ def collect_extras(http_get, fetch_quote):
         "bigcaps": lambda: fetch_bigcaps(fetch_quote),
         "realtime": lambda: {"ok": True, "quotes": fetch_realtime_index(http_get)},
         "crypto": lambda: fetch_crypto(http_get, fetch_quote),
+        "stock_fng": fetch_stock_fng,
     }
-    with ThreadPoolExecutor(max_workers=7) as ex:
+    with ThreadPoolExecutor(max_workers=8) as ex:
         futs = {k: ex.submit(f) for k, f in jobs.items()}
         return {k: f.result() for k, f in futs.items()}

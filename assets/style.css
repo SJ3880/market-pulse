@@ -448,3 +448,13 @@ body.qv-open { overflow: hidden; }
   box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
 .sw:not([data-c]) { background: linear-gradient(135deg, var(--ink-2) 50%, var(--util) 50%); }
 .sw[aria-checked="true"] { box-shadow: 0 0 0 2px var(--ink); }
+
+.fng-cmp { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+.fng-cmp span { display: grid; gap: 1px; text-align: center; padding: 6px 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.fng-cmp small { font-size: 11px; }
+.fng-cmp b { font-size: 15px; }
+.fng-parts { margin-top: 10px; }
+.fng-parts summary { cursor: pointer; font-size: 13px; color: var(--muted); font-weight: 600; }
+.fng-parts .mini { margin-top: 6px; }
+.panel svg + p.hint { font-size: 12px; }
+.fng + svg { width: 100%; height: 30px; display: block; margin-top: 6px; }
